@@ -1,0 +1,19 @@
+{
+  "name": "team",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev:frontend": "npm --prefix frontend run dev",
+    "dev:backend": "npm --prefix backend run dev",
+    "db:setup": "npm --prefix backend run db:setup",
+    "db:migrate": "npm --prefix backend run db:migrate",
+    "db:check": "npm --prefix backend run db:check",
+    "build": "npm --prefix frontend run build",
+    "start:frontend": "npm --prefix frontend run start",
+    "start:backend": "npm --prefix backend run start",
+    "lint": "npm --prefix frontend run lint"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

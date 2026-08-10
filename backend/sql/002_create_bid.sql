@@ -1,0 +1,8 @@
+CREATE TABLE IF NOT EXISTS bid (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+  url TEXT NOT NULL,
+  proposal TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS bid_user_id_idx ON bid (user_id);

@@ -1,0 +1,21 @@
+{
+  "name": "backend",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --experimental-strip-types --experimental-transform-types src/index.ts",
+    "start": "node --experimental-strip-types --experimental-transform-types src/index.ts",
+    "db:setup": "node --experimental-strip-types --experimental-transform-types scripts/setup-db.ts",
+    "db:migrate": "node --experimental-strip-types --experimental-transform-types scripts/migrate.ts",
+    "db:seed": "node --experimental-strip-types --experimental-transform-types scripts/seed-demo-user.ts",
+    "db:seed:users": "node --experimental-strip-types --experimental-transform-types scripts/seed-team-users.ts",
+    "db:check": "node --experimental-strip-types --experimental-transform-types scripts/check-db.ts"
+  },
+  "dependencies": {
+    "pg": "^8.23.0"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

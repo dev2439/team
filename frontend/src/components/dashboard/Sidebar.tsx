@@ -2,13 +2,17 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { isMemberRole, MEMBER_NAV_HREFS } from "@/lib/roles";
+import { getNavHrefsForRole } from "@/lib/roles";
 
 const NAV_ITEMS = [
   { href: "/dashboard/overview", label: "Overview" },
   { href: "/dashboard/bid", label: "Bid" },
+  { href: "/dashboard/team-bid", label: "Team Bid" },
   { href: "/dashboard/report", label: "Report" },
+  { href: "/dashboard/team-report", label: "Team Report" },
   { href: "/dashboard/financial", label: "Financial" },
+  { href: "/dashboard/deposit", label: "Deposit" },
+  { href: "/dashboard/plan", label: "Plan" },
   { href: "/dashboard/users", label: "Users" },
   { href: "/dashboard/settings", label: "Settings" },
 ] as const;
@@ -35,11 +39,8 @@ export function Sidebar({
   onCloseMobile,
 }: SidebarProps) {
   const pathname = usePathname();
-  const navItems = isMemberRole(userRole)
-    ? NAV_ITEMS.filter((item) =>
-        (MEMBER_NAV_HREFS as readonly string[]).includes(item.href),
-      )
-    : NAV_ITEMS;
+  const allowedHrefs = new Set(getNavHrefsForRole(userRole));
+  const navItems = NAV_ITEMS.filter((item) => allowedHrefs.has(item.href));
 
   return (
     <>

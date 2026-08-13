@@ -38,26 +38,29 @@ function styleLine(line: string): string {
     title = title.replace(/\*([^*]+)\*/g, "<em>$1</em>");
     title = title.replace(
       /`([^`]+)`/g,
-      '<code class="rounded bg-slate-100 px-1 font-mono text-[0.9em]">$1</code>',
+      '<code class="rounded bg-slate-100 px-1 font-mono text-[0.9em] dark:bg-slate-700 dark:text-slate-100">$1</code>',
     );
-    return `<span class="${size} text-slate-900">${title}</span>`;
+    return `<span class="${size} text-slate-900 dark:text-slate-100">${title}</span>`;
   }
 
   html = html.replace(
     /`([^`]+)`/g,
-    '<code class="rounded bg-slate-100 px-1 font-mono text-[0.9em] text-slate-800">$1</code>',
+    '<code class="rounded bg-slate-100 px-1 font-mono text-[0.9em] text-slate-800 dark:bg-slate-700 dark:text-slate-100">$1</code>',
   );
   html = html.replace(
     /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g,
-    '<a class="text-sky-700 underline">$1</a>',
+    '<a class="text-sky-700 underline dark:text-sky-300">$1</a>',
   );
   html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
   html = html.replace(/\*([^*\n]+)\*/g, "<em>$1</em>");
   html = html.replace(
     /^[-*]\s+(.*)$/,
-    '<span class="text-slate-700">• $1</span>',
+    '<span class="text-slate-700 dark:text-slate-200">• $1</span>',
   );
-  html = html.replace(/^(\d+)\.\s+(.*)$/, '<span class="text-slate-700">$1. $2</span>');
+  html = html.replace(
+    /^(\d+)\.\s+(.*)$/,
+    '<span class="text-slate-700 dark:text-slate-200">$1. $2</span>',
+  );
 
   return html;
 }
@@ -85,13 +88,13 @@ export function LiveMarkdownEditor({
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-2 text-sm text-slate-700">
+    <div className="flex min-h-0 flex-1 flex-col gap-2 text-sm text-slate-700 dark:text-slate-300">
       <span className="font-medium">Proposal (Markdown)</span>
-      <div className="relative min-h-0 flex-1 overflow-hidden rounded-xl border border-slate-200 bg-white focus-within:border-slate-400 focus-within:ring-2 focus-within:ring-slate-200">
+      <div className="relative min-h-0 flex-1 overflow-hidden rounded-xl border border-slate-200 bg-white focus-within:border-slate-400 focus-within:ring-2 focus-within:ring-slate-200 dark:border-slate-600 dark:bg-slate-900 dark:focus-within:border-slate-500 dark:focus-within:ring-slate-700">
         <div
           ref={previewRef}
           aria-hidden
-          className="pointer-events-none absolute inset-0 overflow-auto px-3.5 py-3 font-mono text-sm leading-6 text-slate-900"
+          className="pointer-events-none absolute inset-0 overflow-auto px-3.5 py-3 font-mono text-sm leading-6 text-slate-900 dark:text-slate-100"
         >
           {value ? (
             lines.map((line, index) => (
@@ -102,7 +105,9 @@ export function LiveMarkdownEditor({
               />
             ))
           ) : (
-            <div className="min-h-[1.5rem] text-slate-400">{placeholder}</div>
+            <div className="min-h-[1.5rem] text-slate-400 dark:text-slate-500">
+              {placeholder}
+            </div>
           )}
         </div>
 
@@ -114,8 +119,12 @@ export function LiveMarkdownEditor({
           onChange={handleChange}
           onScroll={syncScroll}
           spellCheck
-          className="relative z-10 h-full min-h-[12rem] w-full max-h-[calc(100vh-22rem)] resize-none overflow-auto bg-transparent px-3.5 py-3 font-mono text-sm leading-6 text-transparent caret-slate-900 outline-none"
-          style={{ WebkitTextFillColor: "transparent" }}
+          className="markdown-editor-input relative z-10 h-full max-h-[calc(100vh-22rem)] min-h-[12rem] w-full resize-none overflow-auto bg-transparent px-3.5 py-3 font-mono text-sm leading-6 text-transparent caret-slate-900 outline-none dark:caret-slate-100"
+          style={{
+            WebkitTextFillColor: "transparent",
+            backgroundColor: "transparent",
+            color: "transparent",
+          }}
           placeholder={placeholder}
         />
       </div>

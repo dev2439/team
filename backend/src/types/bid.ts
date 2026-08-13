@@ -3,5 +3,6 @@ export type Bid = {
   user_id: number;
   url: string;
   proposal: string;
+  image: string | null;
   created_at: string;
 };

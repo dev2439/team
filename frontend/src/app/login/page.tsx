@@ -3,12 +3,22 @@
 import type { FormEvent } from "react";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import {
   fetchCurrentUser,
   getToken,
   loginRequest,
   saveToken,
 } from "@/lib/auth";
+
+function go(path: string, router: ReturnType<typeof useRouter>) {
+  router.replace(path);
+  window.setTimeout(() => {
+    if (window.location.pathname !== path) {
+      window.location.replace(path);
+    }
+  }, 250);
+}
 
 export default function LoginPage() {
   const router = useRouter();
@@ -22,20 +32,16 @@ export default function LoginPage() {
     async function checkExistingSession() {
       const token = getToken();
       if (!token) {
-        setChecking(false);
         return;
       }
 
       const user = await fetchCurrentUser(token);
       if (user) {
-        router.replace("/dashboard/overview");
-        return;
+        go("/dashboard/overview", router);
       }
-
-      setChecking(false);
     }
 
-    void checkExistingSession();
+    void checkExistingSession().finally(() => setChecking(false));
   }, [router]);
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
@@ -46,12 +52,7 @@ export default function LoginPage() {
     try {
       const { token } = await loginRequest(email, password);
       saveToken(token);
-      router.replace("/dashboard/overview");
-      window.setTimeout(() => {
-        if (window.location.pathname !== "/dashboard/overview") {
-          window.location.replace("/dashboard/overview");
-        }
-      }, 250);
+      go("/dashboard/overview", router);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed");
     } finally {
@@ -71,12 +72,16 @@ export default function LoginPage() {
     <div className="relative flex min-h-full flex-1 flex-col justify-center overflow-hidden px-6 py-16">
       <div
         aria-hidden
-        className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_20%_20%,#dbe7ff_0%,transparent_45%),radial-gradient(circle_at_80%_0%,#ffe8d6_0%,transparent_40%),linear-gradient(180deg,#f7f4ef_0%,#eef2f7_100%)]"
+        className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_20%_20%,#dbe7ff_0%,transparent_45%),radial-gradient(circle_at_80%_0%,#ffe8d6_0%,transparent_40%),linear-gradient(180deg,#f7f4ef_0%,#eef2f7_100%)] dark:bg-[radial-gradient(circle_at_20%_20%,#1e3a5f_0%,transparent_45%),radial-gradient(circle_at_80%_0%,#3b2f1e_0%,transparent_40%),linear-gradient(180deg,#0b1220_0%,#111827_100%)]"
       />
       <div
         aria-hidden
-        className="pointer-events-none absolute inset-0 opacity-[0.35] [background-image:linear-gradient(#0f172a14_1px,transparent_1px),linear-gradient(90deg,#0f172a14_1px,transparent_1px)] [background-size:28px_28px]"
+        className="pointer-events-none absolute inset-0 opacity-[0.35] [background-image:linear-gradient(#0f172a14_1px,transparent_1px),linear-gradient(90deg,#0f172a14_1px,transparent_1px)] [background-size:28px_28px] dark:opacity-20 dark:[background-image:linear-gradient(#94a3b824_1px,transparent_1px),linear-gradient(90deg,#94a3b824_1px,transparent_1px)]"
       />
+
+      <div className="absolute right-4 top-4 z-10 sm:right-6 sm:top-6">
+        <ThemeToggle className="border-slate-200 bg-white/90 text-slate-700 hover:bg-white" />
+      </div>
 
       <main className="relative mx-auto w-full max-w-md">
         <div className="mb-10 text-center">

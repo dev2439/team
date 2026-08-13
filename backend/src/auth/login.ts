@@ -1,6 +1,6 @@
 import { query } from "../db.ts";
 import type { User, UserRole } from "../types/user.ts";
-import { verifyPassword } from "./password.ts";
+import { hashPassword, verifyPassword } from "./password.ts";
 
 export type PublicUser = {
   id: number;
@@ -73,6 +73,56 @@ export async function getUserById(id: number): Promise<PublicUser | null> {
 
   const user = rows[0];
   return user ? toPublicUser(user) : null;
+}
+
+export async function changePassword(input: {
+  userId: number;
+  currentPassword: string;
+  newPassword: string;
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  const currentPassword = input.currentPassword;
+  const newPassword = input.newPassword;
+
+  if (!currentPassword || !newPassword) {
+    return { ok: false, error: "Current and new password are required" };
+  }
+
+  if (newPassword.length < 3) {
+    return { ok: false, error: "New password must be at least 3 characters" };
+  }
+
+  if (currentPassword === newPassword) {
+    return {
+      ok: false,
+      error: "New password must be different from the current password",
+    };
+  }
+
+  const { rows } = await query<UserRow>(
+    `SELECT id, name, email, password, role, balance
+     FROM users
+     WHERE id = $1
+     LIMIT 1`,
+    [input.userId],
+  );
+
+  const user = rows[0];
+  if (!user) {
+    return { ok: false, error: "User not found" };
+  }
+
+  const valid = await verifyPassword(currentPassword, user.password);
+  if (!valid) {
+    return { ok: false, error: "Current password is incorrect" };
+  }
+
+  const hashed = await hashPassword(newPassword);
+  await query(`UPDATE users SET password = $1 WHERE id = $2`, [
+    hashed,
+    input.userId,
+  ]);
+
+  return { ok: true };
 }
 
 export async function listUsers(): Promise<ListedUser[]> {

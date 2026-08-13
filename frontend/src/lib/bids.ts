@@ -5,12 +5,23 @@ export type Bid = {
   user_id: number;
   url: string;
   proposal: string;
+  image: string | null;
   created_at: string;
   user_name?: string;
 };
 
+export type TeamBid = Bid & {
+  user_name: string;
+  sub_team_id: number | null;
+  sub_team_name: string | null;
+};
+
 type BidsResponse = {
   bids: Bid[];
+};
+
+type TeamBidsResponse = {
+  bids: TeamBid[];
 };
 
 type BidResponse = {
@@ -59,13 +70,23 @@ export async function fetchBids(): Promise<Bid[]> {
   return data.bids;
 }
 
+export async function fetchTeamBids(): Promise<TeamBid[]> {
+  const data = await authFetch<TeamBidsResponse>("/api/team-bids");
+  return data.bids;
+}
+
 export async function createBidRequest(input: {
   url: string;
   proposal: string;
+  image?: string | null;
 }): Promise<Bid> {
   const data = await authFetch<BidResponse>("/api/bids", {
     method: "POST",
-    body: JSON.stringify(input),
+    body: JSON.stringify({
+      url: input.url,
+      proposal: input.proposal,
+      image: input.image ?? null,
+    }),
   });
   return data.bid;
 }

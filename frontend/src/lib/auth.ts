@@ -112,6 +112,38 @@ export async function fetchCurrentUser(
   }
 }
 
+export async function changePasswordRequest(input: {
+  currentPassword: string;
+  newPassword: string;
+}): Promise<void> {
+  const token = getToken();
+  if (!token) {
+    throw new Error("Not signed in");
+  }
+
+  const res = await fetchWithTimeout(
+    `${getApiBase()}/api/auth/change-password`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(input),
+    },
+  );
+
+  const data = (await res.json()) as { ok?: boolean } | AuthError;
+
+  if (!res.ok) {
+    throw new Error(
+      "error" in data && typeof data.error === "string"
+        ? data.error
+        : "Failed to change password",
+    );
+  }
+}
+
 export function logout() {
   clearToken();
 }

@@ -1,19 +1,57 @@
 "use client";
 
-import { useEffect } from "react";
-import { MarkdownView } from "@/components/MarkdownView";
+import { useEffect, useRef } from "react";
 import type { Bid } from "@/lib/bids";
 
 type BidDetailModalProps = {
   bid: Bid;
   number: number;
   onClose: () => void;
+  onShowImage?: () => void;
 };
 
-export function BidDetailModal({ bid, number, onClose }: BidDetailModalProps) {
+const SCROLL_STEP = 80;
+
+export function BidDetailModal({
+  bid,
+  number,
+  onClose,
+  onShowImage,
+}: BidDetailModalProps) {
+  const contentRef = useRef<HTMLDivElement>(null);
+  const onCloseRef = useRef(onClose);
+  const onShowImageRef = useRef(onShowImage);
+
+  useEffect(() => {
+    onCloseRef.current = onClose;
+    onShowImageRef.current = onShowImage;
+  }, [onClose, onShowImage]);
+
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") onClose();
+      if (event.key === "Escape") {
+        onCloseRef.current();
+        return;
+      }
+
+      if (
+        (event.key === "ArrowLeft" || event.key === "ArrowRight") &&
+        onShowImageRef.current
+      ) {
+        event.preventDefault();
+        onShowImageRef.current();
+        return;
+      }
+
+      if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+        const el = contentRef.current;
+        if (!el) return;
+        event.preventDefault();
+        el.scrollBy({
+          top: event.key === "ArrowDown" ? SCROLL_STEP : -SCROLL_STEP,
+          behavior: "smooth",
+        });
+      }
     }
 
     document.addEventListener("keydown", onKeyDown);
@@ -24,7 +62,7 @@ export function BidDetailModal({ bid, number, onClose }: BidDetailModalProps) {
       document.removeEventListener("keydown", onKeyDown);
       document.body.style.overflow = previousOverflow;
     };
-  }, [onClose]);
+  }, []);
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
@@ -74,11 +112,17 @@ export function BidDetailModal({ bid, number, onClose }: BidDetailModalProps) {
           </button>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+        <div
+          ref={contentRef}
+          tabIndex={0}
+          className="min-h-0 flex-1 overflow-y-auto px-5 py-4 outline-none"
+        >
           <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
             Proposal
           </p>
-          <MarkdownView content={bid.proposal} />
+          <pre className="whitespace-pre-wrap break-words font-sans text-sm leading-6 text-slate-800">
+            {bid.proposal}
+          </pre>
         </div>
       </div>
     </div>

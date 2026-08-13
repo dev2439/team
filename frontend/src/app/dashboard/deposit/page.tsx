@@ -2,12 +2,26 @@
 
 import type { FormEvent } from "react";
 import { useState } from "react";
-import { changePasswordRequest } from "@/lib/auth";
+import { createDeposit } from "@/lib/deposits";
 
-export default function SettingsPage() {
-  const [currentPassword, setCurrentPassword] = useState("");
-  const [newPassword, setNewPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
+const MAX_AMOUNT = 10000;
+
+function isDoubleInput(raw: string): boolean {
+  if (raw.trim() === "") return true;
+  return /^-?\d*\.?\d*$/.test(raw);
+}
+
+function isAmountWithinMax(raw: string): boolean {
+  if (raw.trim() === "" || raw === "-" || raw === "." || raw === "-.") {
+    return true;
+  }
+  const value = Number(raw);
+  return Number.isFinite(value) && Math.abs(value) <= MAX_AMOUNT;
+}
+
+export default function DepositPage() {
+  const [projectName, setProjectName] = useState("");
+  const [amount, setAmount] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -17,35 +31,33 @@ export default function SettingsPage() {
     setError(null);
     setMessage(null);
 
-    if (!currentPassword || !newPassword) {
-      setError("Current and new password are required");
+    const name = projectName.trim();
+    if (!name) {
+      setError("Project name is required");
       return;
     }
 
-    if (newPassword.length < 3) {
-      setError("New password must be at least 3 characters");
+    const amountValue = Number(amount);
+    if (!Number.isFinite(amountValue)) {
+      setError("Amount must be a valid number");
       return;
     }
-
-    if (newPassword !== confirmPassword) {
-      setError("New password and confirmation do not match");
-      return;
-    }
-
-    if (currentPassword === newPassword) {
-      setError("New password must be different from the current password");
+    if (Math.abs(amountValue) > MAX_AMOUNT) {
+      setError(`Amount must be at most ${MAX_AMOUNT}`);
       return;
     }
 
     setSaving(true);
     try {
-      await changePasswordRequest({ currentPassword, newPassword });
-      setCurrentPassword("");
-      setNewPassword("");
-      setConfirmPassword("");
-      setMessage("Password updated");
+      await createDeposit({
+        project_name: name,
+        amount: amountValue,
+      });
+      setProjectName("");
+      setAmount("");
+      setMessage("Project saved");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to change password");
+      setError(err instanceof Error ? err.message : "Failed to save project");
     } finally {
       setSaving(false);
     }
@@ -55,33 +67,30 @@ export default function SettingsPage() {
     <div className="mx-auto w-full max-w-7xl">
       <div className="mb-6">
         <h1 className="text-3xl font-semibold tracking-tight text-slate-900">
-          Settings
+          Deposit
         </h1>
-        <p className="mt-1 text-slate-600">Manage your account settings.</p>
+        <p className="mt-1 text-slate-600">Save a project deposit entry.</p>
       </div>
 
       <div className="rounded-2xl border border-slate-200 bg-white p-5">
-        <h2 className="text-base font-semibold text-slate-900">
-          Change password
-        </h2>
+        <h2 className="text-base font-semibold text-slate-900">Project</h2>
         <p className="mt-1 mb-4 text-sm text-slate-600">
-          Update the password for your signed-in account.
+          Enter a project name and amount to save to the deposit table.
         </p>
 
         <form onSubmit={onSubmit} className="max-w-md space-y-3">
           <label className="block">
             <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-500">
-              Current password
+              Project Name
             </span>
             <input
-              type="password"
-              name="currentPassword"
-              autoComplete="current-password"
+              type="text"
+              name="projectName"
               required
-              value={currentPassword}
+              value={projectName}
               onChange={(event) => {
                 setMessage(null);
-                setCurrentPassword(event.target.value);
+                setProjectName(event.target.value);
               }}
               className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-slate-900 outline-none transition focus:border-slate-400 focus:ring-1 focus:ring-slate-200"
             />
@@ -89,36 +98,22 @@ export default function SettingsPage() {
 
           <label className="block">
             <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-500">
-              New password
+              Amount
             </span>
             <input
-              type="password"
-              name="newPassword"
-              autoComplete="new-password"
+              type="text"
+              name="amount"
+              inputMode="decimal"
               required
-              value={newPassword}
+              value={amount}
               onChange={(event) => {
+                const next = event.target.value;
+                if (!isDoubleInput(next)) return;
+                if (!isAmountWithinMax(next)) return;
                 setMessage(null);
-                setNewPassword(event.target.value);
+                setAmount(next);
               }}
-              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-slate-900 outline-none transition focus:border-slate-400 focus:ring-1 focus:ring-slate-200"
-            />
-          </label>
-
-          <label className="block">
-            <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-500">
-              Confirm new password
-            </span>
-            <input
-              type="password"
-              name="confirmPassword"
-              autoComplete="new-password"
-              required
-              value={confirmPassword}
-              onChange={(event) => {
-                setMessage(null);
-                setConfirmPassword(event.target.value);
-              }}
+              max={MAX_AMOUNT}
               className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-slate-900 outline-none transition focus:border-slate-400 focus:ring-1 focus:ring-slate-200"
             />
           </label>
@@ -129,7 +124,7 @@ export default function SettingsPage() {
               disabled={saving}
               className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {saving ? "Updating…" : "Update password"}
+              {saving ? "Saving…" : "Save"}
             </button>
             {message && (
               <span className="text-sm text-emerald-600">{message}</span>

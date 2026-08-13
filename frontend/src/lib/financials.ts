@@ -1,13 +1,10 @@
 import { getApiBase, getToken } from "@/lib/auth";
 
-export type FinancialType = "in" | "ums" | "out";
-
 export type FinancialEntry = {
   id: number;
   user_id: number;
   amount: number;
-  type: FinancialType | string;
-  note: string;
+  type: string;
   created_at: string;
   day: string;
 };
@@ -60,8 +57,7 @@ export async function fetchFinancialRange(
 export async function saveFinancial(input: {
   user_id: number;
   amount: number;
-  type: FinancialType;
-  note: string;
+  type: string;
   day: string;
 }): Promise<FinancialEntry> {
   const data = await authFetch<{ financial: FinancialEntry }>(

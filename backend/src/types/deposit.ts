@@ -1,8 +1,7 @@
-export type Financial = {
+export type Deposit = {
   id: number;
   user_id: number;
+  project_name: string;
   amount: number;
-  type: string;
-  day: string;
   created_at: string;
 };

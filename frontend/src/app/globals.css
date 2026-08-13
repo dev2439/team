@@ -1,8 +1,24 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #f4f6f8;
+  --foreground: #0f172a;
+  --panel: #ffffff;
+  --panel-muted: #f8fafc;
+  --border: #e2e8f0;
+  --accent-soft: #e0f2fe;
+}
+
+.dark {
+  --background: #0b1220;
+  --foreground: #e2e8f0;
+  --panel: #111827;
+  --panel-muted: #1e293b;
+  --border: #334155;
+  --accent-soft: #0c4a6e;
+  color-scheme: dark;
 }
 
 @theme inline {
@@ -12,15 +28,187 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
+}
+
+/* Dark theme remaps for existing slate/white utility classes across pages */
+html.dark .bg-\[\#f4f6f8\] {
+  background-color: var(--background) !important;
+}
+
+html.dark .bg-white {
+  background-color: var(--panel) !important;
+}
+
+html.dark .bg-white\/90 {
+  background-color: rgb(17 24 39 / 0.92) !important;
+}
+
+html.dark .bg-slate-50,
+html.dark .bg-slate-50\/60,
+html.dark .bg-slate-50\/70 {
+  background-color: rgb(30 41 59 / 0.72) !important;
+}
+
+html.dark .bg-sky-50,
+html.dark .bg-sky-50\/60,
+html.dark .bg-sky-50\/70 {
+  background-color: rgb(12 74 110 / 0.4) !important;
+}
+
+html.dark .bg-amber-50 {
+  background-color: rgb(120 53 15 / 0.35) !important;
+}
+
+html.dark .border-slate-100,
+html.dark .border-slate-200,
+html.dark .border-slate-300 {
+  border-color: var(--border) !important;
+}
+
+html.dark .border-sky-200 {
+  border-color: rgb(7 89 133) !important;
+}
+
+html.dark .border-amber-200,
+html.dark .border-amber-300 {
+  border-color: rgb(146 64 14) !important;
+}
+
+html.dark .text-slate-900,
+html.dark .text-slate-800 {
+  color: #f1f5f9 !important;
+}
+
+html.dark .text-slate-700,
+html.dark .text-slate-600 {
+  color: #cbd5e1 !important;
+}
+
+html.dark .text-slate-500,
+html.dark .text-slate-400 {
+  color: #94a3b8 !important;
+}
+
+html.dark .text-amber-900,
+html.dark .text-amber-950 {
+  color: #fde68a !important;
+}
+
+html.dark .text-sky-700,
+html.dark .text-sky-800 {
+  color: #7dd3fc !important;
+}
+
+html.dark .hover\:bg-slate-50:hover {
+  background-color: rgb(30 41 59 / 0.9) !important;
+}
+
+html.dark .hover\:bg-sky-100:hover {
+  background-color: rgb(12 74 110 / 0.55) !important;
+}
+
+html.dark .hover\:bg-amber-100:hover {
+  background-color: rgb(120 53 15 / 0.5) !important;
+}
+
+/* Primary buttons: lighten in dark mode for contrast */
+html.dark .bg-slate-900 {
+  background-color: #e2e8f0 !important;
+  color: #0f172a !important;
+}
+
+html.dark .bg-slate-900:hover,
+html.dark .hover\:bg-slate-800:hover {
+  background-color: #f8fafc !important;
+  color: #0f172a !important;
+}
+
+/* Keep sidebar brand panel dark even when button styles lighten */
+html.dark aside[class*="0f172a"] {
+  background-color: #0f172a !important;
+  color: #f1f5f9 !important;
+}
+
+html.dark .bg-red-50 {
+  background-color: rgb(127 29 29 / 0.35) !important;
+}
+
+html.dark .text-red-600,
+html.dark .text-red-700 {
+  color: #fca5a5 !important;
+}
+
+html.dark .text-emerald-600 {
+  color: #6ee7b7 !important;
+}
+
+html.dark .ring-slate-200,
+html.dark .focus\:ring-slate-200:focus {
+  --tw-ring-color: rgb(51 65 85) !important;
+}
+
+html.dark .focus\:border-slate-400:focus {
+  border-color: #64748b !important;
+}
+
+html.dark .bg-sky-50 {
+  background-color: rgb(12 74 110 / 0.45) !important;
+}
+
+html.dark input:not([type="checkbox"]):not([type="radio"]),
+html.dark textarea:not(.markdown-editor-input),
+html.dark select {
+  background-color: #0f172a !important;
+  color: #f1f5f9 !important;
+  border-color: var(--border) !important;
+}
+
+html.dark input::placeholder,
+html.dark textarea::placeholder {
+  color: #64748b !important;
+}
+
+html.dark .shadow-lg,
+html.dark .shadow-sm {
+  --tw-shadow-color: rgb(0 0 0 / 0.45);
+}
+
+/* Recharts: dark-mode tooltip + axes */
+html.dark .recharts-default-tooltip {
+  background-color: #1e293b !important;
+  border: 1px solid #475569 !important;
+  border-radius: 0.5rem !important;
+  color: #f1f5f9 !important;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45) !important;
+  opacity: 1 !important;
+}
+
+html.dark .recharts-tooltip-label {
+  color: #f8fafc !important;
+  font-weight: 600;
+}
+
+html.dark .recharts-tooltip-item {
+  color: inherit;
+}
+
+html.dark .recharts-rectangle.recharts-tooltip-cursor {
+  fill: rgb(148 163 184 / 0.14) !important;
+}
+
+html.dark .recharts-cartesian-grid line {
+  stroke: #334155 !important;
+}
+
+html.dark .recharts-text,
+html.dark .recharts-cartesian-axis-tick-value {
+  fill: #94a3b8 !important;
+}
+
+html.dark .recharts-legend-item-text {
+  color: #cbd5e1 !important;
 }

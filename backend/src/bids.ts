@@ -5,6 +5,13 @@ export type BidWithUser = Bid & {
   user_name: string;
 };
 
+export type TeamBid = BidWithUser & {
+  sub_team_id: number | null;
+  sub_team_name: string | null;
+};
+
+const BID_SELECT = `id, user_id, url, proposal, image, created_at`;
+
 async function getSubTeamUserIds(userId: number): Promise<number[]> {
   const { rows } = await query<{ user_ids: number[] | null }>(
     `SELECT user_ids
@@ -22,7 +29,7 @@ async function getSubTeamUserIds(userId: number): Promise<number[]> {
 
 export async function listBidsForUser(userId: number): Promise<Bid[]> {
   const { rows } = await query<Bid>(
-    `SELECT id, user_id, url, proposal, created_at
+    `SELECT ${BID_SELECT}
      FROM bid
      WHERE user_id = $1
      ORDER BY created_at DESC, id DESC`,
@@ -37,7 +44,7 @@ export async function listBidsForSubTeam(
   const memberIds = await getSubTeamUserIds(userId);
 
   const { rows } = await query<BidWithUser>(
-    `SELECT b.id, b.user_id, b.url, b.proposal, b.created_at, u.name AS user_name
+    `SELECT b.id, b.user_id, b.url, b.proposal, b.image, b.created_at, u.name AS user_name
      FROM bid b
      INNER JOIN users u ON u.id = b.user_id
      WHERE b.user_id = ANY($1::integer[])
@@ -48,16 +55,49 @@ export async function listBidsForSubTeam(
   return rows;
 }
 
+export async function listTeamBids(): Promise<TeamBid[]> {
+  const { rows } = await query<TeamBid>(
+    `SELECT
+       b.id,
+       b.user_id,
+       b.url,
+       b.proposal,
+       b.image,
+       b.created_at,
+       u.name AS user_name,
+       (
+         SELECT st.id
+         FROM sub_team st
+         WHERE b.user_id = ANY(COALESCE(st.user_ids, '{}'::integer[]))
+         ORDER BY st.id ASC
+         LIMIT 1
+       ) AS sub_team_id,
+       (
+         SELECT st.name
+         FROM sub_team st
+         WHERE b.user_id = ANY(COALESCE(st.user_ids, '{}'::integer[]))
+         ORDER BY st.id ASC
+         LIMIT 1
+       ) AS sub_team_name
+     FROM bid b
+     INNER JOIN users u ON u.id = b.user_id
+     ORDER BY b.created_at DESC, b.id DESC`,
+  );
+
+  return rows;
+}
+
 export async function createBid(input: {
   userId: number;
   url: string;
   proposal: string;
+  image?: string | null;
 }): Promise<BidWithUser> {
   const { rows } = await query<BidWithUser>(
-    `INSERT INTO bid (user_id, url, proposal)
-     VALUES ($1, $2, $3)
-     RETURNING id, user_id, url, proposal, created_at`,
-    [input.userId, input.url, input.proposal],
+    `INSERT INTO bid (user_id, url, proposal, image)
+     VALUES ($1, $2, $3, $4)
+     RETURNING ${BID_SELECT}`,
+    [input.userId, input.url, input.proposal, input.image ?? null],
   );
 
   const bid = rows[0];

@@ -21,9 +21,70 @@ export type WeekDayReport = {
   is_today: boolean;
 };
 
+export type TeamReportEntry = {
+  date: string;
+  user_id: number;
+  user_name: string;
+  sub_team_id: number | null;
+  sub_team_name: string | null;
+  working_time: number;
+  bid: number;
+  message: number;
+  call: number;
+  offer: number;
+  accounts: number;
+};
+
+export type SubTeamWeekDayTotals = {
+  day: WeekDayKey;
+  date: string;
+  working_time: number;
+  bid: number;
+  message: number;
+  call: number;
+  offer: number;
+  accounts: number;
+  is_today: boolean;
+};
+
+export type SubTeamWeekMemberDay = {
+  day: WeekDayKey;
+  date: string;
+  working_time: number;
+  bid: number;
+  message: number;
+  call: number;
+  offer: number;
+  accounts: number;
+  is_today: boolean;
+};
+
+export type SubTeamWeekMemberTotals = {
+  user_id: number;
+  user_name: string;
+  working_time: number;
+  bid: number;
+  message: number;
+  call: number;
+  offer: number;
+  accounts: number;
+  days: SubTeamWeekMemberDay[];
+};
+
+export type SubTeamWeekReports = {
+  sub_team_name: string | null;
+  days: SubTeamWeekDayTotals[];
+  members: SubTeamWeekMemberTotals[];
+  today: WeekDayKey;
+};
+
 type WeekResponse = {
   days: WeekDayReport[];
   today: WeekDayKey;
+};
+
+type TeamReportsResponse = {
+  reports: TeamReportEntry[];
 };
 
 type ErrorResponse = {
@@ -67,6 +128,15 @@ export async function fetchWeekReports(): Promise<WeekResponse> {
   return authFetch<WeekResponse>("/api/reports/week");
 }
 
+export async function fetchSubTeamWeekReports(): Promise<SubTeamWeekReports> {
+  return authFetch<SubTeamWeekReports>("/api/reports/sub-team-week");
+}
+
+export async function fetchTeamReports(): Promise<TeamReportEntry[]> {
+  const data = await authFetch<TeamReportsResponse>("/api/team-reports");
+  return data.reports;
+}
+
 export async function saveTodayReport(input: {
   working_time: number;
   message: number;
@@ -75,6 +145,20 @@ export async function saveTodayReport(input: {
   accounts: number;
 }) {
   return authFetch<{ report: unknown }>("/api/reports/today", {
+    method: "PUT",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function saveDayReport(input: {
+  date: string;
+  working_time: number;
+  message: number;
+  call: number;
+  offer: number;
+  accounts: number;
+}) {
+  return authFetch<{ report: unknown }>("/api/reports/day", {
     method: "PUT",
     body: JSON.stringify(input),
   });

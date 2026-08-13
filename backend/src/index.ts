@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { URL } from "node:url";
 import { createToken } from "./auth/jwt.ts";
 import {
+  changePassword,
   getUserById,
   listSubTeamNames,
   listUsers,
@@ -13,10 +14,16 @@ import {
 } from "./auth/login.ts";
 import { getAuthPayload } from "./auth/middleware.ts";
 import { isUserRole } from "./types/user.ts";
-import { createBid, listBidsForSubTeam } from "./bids.ts";
+import { createBid, listBidsForSubTeam, listTeamBids } from "./bids.ts";
 import { checkDatabase, closePool } from "./db.ts";
 import { readJsonBody } from "./http.ts";
-import { getCurrentWeekReports, upsertTodayReport } from "./reports.ts";
+import {
+  getCurrentWeekReports,
+  getSubTeamWeekReports,
+  listTeamReports,
+  upsertReportForDate,
+  upsertTodayReport,
+} from "./reports.ts";
 import { listSubTeamsWithMembers } from "./sub-teams.ts";
 import { getTarget, upsertTarget } from "./targets.ts";
 import {
@@ -24,6 +31,11 @@ import {
   listFinancialInRange,
   upsertFinancial,
 } from "./financials.ts";
+import { createDeposit, listDeposits } from "./deposits.ts";
+import {
+  listUnreadBidNotifications,
+  markBidNotificationsRead,
+} from "./notifications.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -47,51 +59,19 @@ function loadEnv() {
 loadEnv();
 
 const PORT = Number(process.env.PORT) || 4000;
-const FRONTEND_ORIGINS = (
-  process.env.FRONTEND_ORIGIN || "http://localhost:3000"
-)
-  .split(",")
-  .map((value) => value.trim())
-  .filter(Boolean);
-const DEFAULT_FRONTEND_ORIGIN = FRONTEND_ORIGINS[0] ?? "http://localhost:3000";
 
-function isAllowedOrigin(origin: string): boolean {
-  if (FRONTEND_ORIGINS.includes("*") || FRONTEND_ORIGINS.includes(origin)) {
-    return true;
-  }
-
-  try {
-    const url = new URL(origin);
-    const host = url.hostname;
-    return (
-      host === "localhost" ||
-      host === "127.0.0.1" ||
-      /^192\.168\.\d{1,3}\.\d{1,3}$/.test(host) ||
-      /^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host) ||
-      /^172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}$/.test(host)
-    );
-  } catch {
-    return false;
-  }
-}
-
-function corsHeaders(req: IncomingMessage) {
-  const origin = req.headers.origin;
-  const allowOrigin =
-    origin && isAllowedOrigin(origin) ? origin : DEFAULT_FRONTEND_ORIGIN;
-
+function corsHeaders() {
   return {
-    "Access-Control-Allow-Origin": allowOrigin,
+    "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "GET,POST,PUT,OPTIONS",
     "Access-Control-Allow-Headers":
       "Content-Type, Authorization, authorization, content-type",
     "Access-Control-Max-Age": "86400",
-    Vary: "Origin",
   };
 }
 
 function sendJson(
-  req: IncomingMessage,
+  _req: IncomingMessage,
   res: ServerResponse,
   status: number,
   body: unknown,
@@ -100,7 +80,7 @@ function sendJson(
   res.writeHead(status, {
     "Content-Type": "application/json",
     "Content-Length": Buffer.byteLength(payload),
-    ...corsHeaders(req),
+    ...corsHeaders(),
   });
   res.end(payload);
 }
@@ -112,7 +92,7 @@ const server = createServer(async (req, res) => {
   }
 
   if (req.method === "OPTIONS") {
-    res.writeHead(204, corsHeaders(req));
+    res.writeHead(204, corsHeaders());
     res.end();
     return;
   }
@@ -185,6 +165,43 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === "POST" && url.pathname === "/api/auth/change-password") {
+      const payload = getAuthPayload(req);
+      if (!payload) {
+        sendJson(req, res, 401, { error: "Unauthorized" });
+        return;
+      }
+
+      let body: Record<string, unknown> | null;
+      try {
+        body = await readJsonBody(req);
+      } catch {
+        sendJson(req, res, 400, { error: "Invalid JSON body" });
+        return;
+      }
+
+      const currentPassword =
+        typeof body?.currentPassword === "string" ? body.currentPassword : "";
+      const newPassword =
+        typeof body?.newPassword === "string" ? body.newPassword : "";
+
+      const result = await changePassword({
+        userId: payload.sub,
+        currentPassword,
+        newPassword,
+      });
+
+      if (!result.ok) {
+        const status =
+          result.error === "Current password is incorrect" ? 401 : 400;
+        sendJson(req, res, status, { error: result.error });
+        return;
+      }
+
+      sendJson(req, res, 200, { ok: true });
+      return;
+    }
+
     if (req.method === "GET" && url.pathname === "/api/bids") {
       const payload = getAuthPayload(req);
       if (!payload) {
@@ -193,6 +210,18 @@ const server = createServer(async (req, res) => {
       }
 
       const bids = await listBidsForSubTeam(payload.sub);
+      sendJson(req, res, 200, { bids });
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/team-bids") {
+      const payload = getAuthPayload(req);
+      if (!payload) {
+        sendJson(req, res, 401, { error: "Unauthorized" });
+        return;
+      }
+
+      const bids = await listTeamBids();
       sendJson(req, res, 200, { bids });
       return;
     }
@@ -215,9 +244,22 @@ const server = createServer(async (req, res) => {
       const bidUrlRaw = typeof body?.url === "string" ? body.url.trim() : "";
       const proposal =
         typeof body?.proposal === "string" ? body.proposal.trim() : "";
+      const imageRaw =
+        typeof body?.image === "string" ? body.image.trim() : "";
+      const image = imageRaw || null;
 
       if (!bidUrlRaw || !proposal) {
         sendJson(req, res, 400, { error: "URL and proposal are required" });
+        return;
+      }
+
+      if (
+        image &&
+        (!image.startsWith("data:image/") || image.length > 3_500_000)
+      ) {
+        sendJson(req, res, 400, {
+          error: "image must be a data URL under ~2.5MB",
+        });
         return;
       }
 
@@ -236,8 +278,58 @@ const server = createServer(async (req, res) => {
         userId: payload.sub,
         url: bidUrl,
         proposal,
+        image,
       });
       sendJson(req, res, 201, { bid });
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/notifications") {
+      const payload = getAuthPayload(req);
+      if (!payload) {
+        sendJson(req, res, 401, { error: "Unauthorized" });
+        return;
+      }
+
+      const notifications = await listUnreadBidNotifications(payload.sub);
+      const recipientUserIds = [
+        ...new Set(notifications.map((item) => item.recipient_user_id)),
+      ];
+      sendJson(req, res, 200, {
+        notifications,
+        recipient_user_ids: recipientUserIds,
+      });
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/notifications/read") {
+      const payload = getAuthPayload(req);
+      if (!payload) {
+        sendJson(req, res, 401, { error: "Unauthorized" });
+        return;
+      }
+
+      let body: Record<string, unknown> | null;
+      try {
+        body = await readJsonBody(req);
+      } catch {
+        sendJson(req, res, 400, { error: "Invalid JSON body" });
+        return;
+      }
+
+      const idsRaw = body?.ids;
+      const ids = Array.isArray(idsRaw)
+        ? idsRaw
+            .map((value) => Number(value))
+            .filter((value) => Number.isFinite(value) && value > 0)
+            .map((value) => Math.trunc(value))
+        : undefined;
+
+      const updated = await markBidNotificationsRead(
+        payload.sub,
+        ids && ids.length > 0 ? ids : undefined,
+      );
+      sendJson(req, res, 200, { ok: true, updated });
       return;
     }
 
@@ -250,6 +342,30 @@ const server = createServer(async (req, res) => {
 
       const week = await getCurrentWeekReports(payload.sub);
       sendJson(req, res, 200, week);
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/reports/sub-team-week") {
+      const payload = getAuthPayload(req);
+      if (!payload) {
+        sendJson(req, res, 401, { error: "Unauthorized" });
+        return;
+      }
+
+      const week = await getSubTeamWeekReports(payload.sub);
+      sendJson(req, res, 200, week);
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/team-reports") {
+      const payload = getAuthPayload(req);
+      if (!payload) {
+        sendJson(req, res, 401, { error: "Unauthorized" });
+        return;
+      }
+
+      const reports = await listTeamReports();
+      sendJson(req, res, 200, { reports });
       return;
     }
 
@@ -412,7 +528,6 @@ const server = createServer(async (req, res) => {
       const userId = Number(body?.user_id);
       const amount = Number(body?.amount);
       const typeRaw = typeof body?.type === "string" ? body.type.trim() : "";
-      const note = typeof body?.note === "string" ? body.note : "";
       const day = typeof body?.day === "string" ? body.day.trim() : "";
 
       if (!Number.isFinite(userId) || !Number.isFinite(amount)) {
@@ -421,7 +536,7 @@ const server = createServer(async (req, res) => {
       }
 
       if (!isFinancialType(typeRaw)) {
-        sendJson(req, res, 400, { error: "type must be in, ums, or out" });
+        sendJson(req, res, 400, { error: "type is required" });
         return;
       }
 
@@ -431,20 +546,165 @@ const server = createServer(async (req, res) => {
       }
 
       const today = new Date();
-      const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
-      if (day !== todayKey) {
-        sendJson(req, res, 400, { error: "Only today's financial values can be edited" });
+      const todayLocal = new Date(
+        today.getFullYear(),
+        today.getMonth(),
+        today.getDate(),
+      );
+      const [yearRaw, monthRaw, dayRaw] = day.split("-");
+      const weekStart = new Date(
+        Number(yearRaw),
+        Number(monthRaw) - 1,
+        Number(dayRaw),
+      );
+      const weekEnd = new Date(weekStart);
+      weekEnd.setDate(weekStart.getDate() + 6);
+      if (todayLocal < weekStart || todayLocal > weekEnd) {
+        sendJson(req, res, 400, {
+          error: "Only the current week's financial values can be edited",
+        });
         return;
       }
 
       const entry = await upsertFinancial({
         userId: Math.trunc(userId),
         amount,
-        type: typeRaw,
-        note,
+        type: typeRaw.trim(),
         day,
       });
       sendJson(req, res, 200, { financial: entry });
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/deposits") {
+      const payload = getAuthPayload(req);
+      if (!payload) {
+        sendJson(req, res, 401, { error: "Unauthorized" });
+        return;
+      }
+
+      const deposits = await listDeposits();
+      sendJson(req, res, 200, { deposits });
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/deposits") {
+      const payload = getAuthPayload(req);
+      if (!payload) {
+        sendJson(req, res, 401, { error: "Unauthorized" });
+        return;
+      }
+
+      let body: Record<string, unknown> | null;
+      try {
+        body = await readJsonBody(req);
+      } catch {
+        sendJson(req, res, 400, { error: "Invalid JSON body" });
+        return;
+      }
+
+      const projectName =
+        typeof body?.project_name === "string" ? body.project_name.trim() : "";
+      const amount = Number(body?.amount);
+      const userIdRaw = body?.user_id;
+      const parsedBodyUserId =
+        typeof userIdRaw === "number"
+          ? userIdRaw
+          : typeof userIdRaw === "string" && userIdRaw.trim() !== ""
+            ? Number(userIdRaw)
+            : NaN;
+      // Prefer explicit user_id from body (selected Financial member).
+      // Fall back to signed-in user only when user_id is omitted (Deposit page).
+      const userId = Number.isFinite(parsedBodyUserId)
+        ? parsedBodyUserId
+        : Number(payload.sub);
+
+      if (!projectName) {
+        sendJson(req, res, 400, { error: "project_name is required" });
+        return;
+      }
+
+      if (!Number.isFinite(amount)) {
+        sendJson(req, res, 400, { error: "amount must be a valid number" });
+        return;
+      }
+
+      if (!Number.isFinite(userId)) {
+        sendJson(req, res, 400, { error: "user_id must be a valid number" });
+        return;
+      }
+
+      const targetUserId = Math.trunc(userId);
+      const targetUser = await getUserById(targetUserId);
+      if (!targetUser) {
+        sendJson(req, res, 400, { error: "user_id does not match a user" });
+        return;
+      }
+
+      const deposit = await createDeposit({
+        userId: targetUserId,
+        projectName,
+        amount,
+      });
+      sendJson(req, res, 201, { deposit });
+      return;
+    }
+
+    // Financial page: save Bid amount delta for a specific member (user_id required)
+    if (req.method === "POST" && url.pathname === "/api/deposits/bid") {
+      const payload = getAuthPayload(req);
+      if (!payload) {
+        sendJson(req, res, 401, { error: "Unauthorized" });
+        return;
+      }
+
+      if (payload.role === "Member") {
+        sendJson(req, res, 403, { error: "Members cannot edit Bid amounts" });
+        return;
+      }
+
+      let body: Record<string, unknown> | null;
+      try {
+        body = await readJsonBody(req);
+      } catch {
+        sendJson(req, res, 400, { error: "Invalid JSON body" });
+        return;
+      }
+
+      const userIdRaw = body?.user_id;
+      const amount = Number(body?.amount);
+      const userId =
+        typeof userIdRaw === "number"
+          ? userIdRaw
+          : typeof userIdRaw === "string" && userIdRaw.trim() !== ""
+            ? Number(userIdRaw)
+            : NaN;
+
+      if (!Number.isFinite(userId)) {
+        sendJson(req, res, 400, {
+          error: "user_id is required for Bid deposit",
+        });
+        return;
+      }
+
+      if (!Number.isFinite(amount)) {
+        sendJson(req, res, 400, { error: "amount must be a valid number" });
+        return;
+      }
+
+      const targetUserId = Math.trunc(userId);
+      const targetUser = await getUserById(targetUserId);
+      if (!targetUser) {
+        sendJson(req, res, 400, { error: "user_id does not match a user" });
+        return;
+      }
+
+      const deposit = await createDeposit({
+        userId: targetUserId,
+        projectName: "Bid",
+        amount,
+      });
+      sendJson(req, res, 201, { deposit });
       return;
     }
 
@@ -488,7 +748,11 @@ const server = createServer(async (req, res) => {
       return;
     }
 
-    if (req.method === "PUT" && url.pathname === "/api/reports/today") {
+    if (
+      req.method === "PUT" &&
+      (url.pathname === "/api/reports/today" ||
+        url.pathname === "/api/reports/day")
+    ) {
       const payload = getAuthPayload(req);
       if (!payload) {
         sendJson(req, res, 401, { error: "Unauthorized" });
@@ -508,6 +772,8 @@ const server = createServer(async (req, res) => {
       const call = Number(body?.call);
       const offer = Number(body?.offer);
       const accounts = Number(body?.accounts);
+      const dateRaw =
+        typeof body?.date === "string" ? body.date.trim() : "";
 
       if (
         ![workingTime, message, call, offer, accounts].every((value) =>
@@ -518,15 +784,38 @@ const server = createServer(async (req, res) => {
         return;
       }
 
-      const report = await upsertTodayReport({
-        userId: payload.sub,
-        workingTime,
-        message: Math.trunc(message),
-        call: Math.trunc(call),
-        offer: Math.trunc(offer),
-        accounts: Math.trunc(accounts),
-      });
-      sendJson(req, res, 200, { report });
+      try {
+        const report = dateRaw
+          ? await upsertReportForDate({
+              userId: payload.sub,
+              date: dateRaw,
+              workingTime,
+              message: Math.trunc(message),
+              call: Math.trunc(call),
+              offer: Math.trunc(offer),
+              accounts: Math.trunc(accounts),
+            })
+          : await upsertTodayReport({
+              userId: payload.sub,
+              workingTime,
+              message: Math.trunc(message),
+              call: Math.trunc(call),
+              offer: Math.trunc(offer),
+              accounts: Math.trunc(accounts),
+            });
+        sendJson(req, res, 200, { report });
+      } catch (err) {
+        const messageText =
+          err instanceof Error ? err.message : "Failed to save report";
+        if (
+          messageText.includes("date must") ||
+          messageText.includes("current week")
+        ) {
+          sendJson(req, res, 400, { error: messageText });
+          return;
+        }
+        throw err;
+      }
       return;
     }
 

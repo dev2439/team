@@ -12,6 +12,8 @@ const NAV_ITEMS = [
   { href: "/dashboard/team-report", label: "Team Report" },
   { href: "/dashboard/financial", label: "Financial" },
   { href: "/dashboard/deposit", label: "Deposit" },
+  { href: "/dashboard/my-projects", label: "My Projects" },
+  { href: "/dashboard/eta", label: "ETA" },
   { href: "/dashboard/plan", label: "Plan" },
   { href: "/dashboard/users", label: "Users" },
   { href: "/dashboard/settings", label: "Settings" },

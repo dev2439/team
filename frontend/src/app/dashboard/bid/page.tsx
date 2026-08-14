@@ -18,12 +18,19 @@ function normalizeUrl(value: string): string {
   return `https://${trimmed}`;
 }
 
-function dayKeyFromCreatedAt(value: string): string {
-  const date = new Date(value);
+function dayKeyFromDate(date: Date): string {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+function dayKeyFromCreatedAt(value: string): string {
+  return dayKeyFromDate(new Date(value));
+}
+
+function todayDayKey(): string {
+  return dayKeyFromDate(new Date());
 }
 
 function formatDayLabel(dayKey: string): string {
@@ -55,6 +62,23 @@ export default function BidPage() {
     bid: Bid;
     number: number;
   } | null>(null);
+  const [dayExpandedOverrides, setDayExpandedOverrides] = useState<
+    Record<string, boolean>
+  >({});
+
+  function isDayExpanded(dayKey: string): boolean {
+    if (Object.prototype.hasOwnProperty.call(dayExpandedOverrides, dayKey)) {
+      return dayExpandedOverrides[dayKey]!;
+    }
+    return dayKey === todayDayKey();
+  }
+
+  function toggleDayExpanded(dayKey: string) {
+    setDayExpandedOverrides((current) => ({
+      ...current,
+      [dayKey]: !isDayExpanded(dayKey),
+    }));
+  }
 
   const loadBids = useCallback(async (options?: { silent?: boolean }) => {
     const silent = options?.silent ?? false;
@@ -227,76 +251,100 @@ export default function BidPage() {
 
             {!loading && bids.length > 0 && (
               <div className="divide-y divide-slate-200">
-                {bidsByDay.map((group) => (
-                  <section key={group.dayKey}>
-                    <div className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-slate-200 bg-slate-50 px-4 py-2.5">
-                      <h3 className="text-sm font-semibold text-slate-900">
-                        {group.label}
-                      </h3>
-                      <span className="text-xs text-slate-500">
-                        {group.bids.length} bid
-                        {group.bids.length === 1 ? "" : "s"}
-                      </span>
-                    </div>
-                    <ul className="divide-y divide-slate-100">
-                      {group.bids.map((bid, index) => {
-                        const isOwnBid =
-                          currentUser != null &&
-                          bid.user_id === currentUser.id;
+                {bidsByDay.map((group) => {
+                  const expanded = isDayExpanded(group.dayKey);
 
-                        return (
-                          <li
-                            key={bid.id}
-                            className="flex items-center gap-3 px-4 py-3"
+                  return (
+                    <section key={group.dayKey}>
+                      <button
+                        type="button"
+                        onClick={() => toggleDayExpanded(group.dayKey)}
+                        aria-expanded={expanded}
+                        className={`sticky top-0 z-10 flex w-full items-center justify-between gap-3 bg-slate-50 px-4 py-2.5 text-left transition hover:bg-slate-100 ${
+                          expanded ? "border-b border-slate-200" : ""
+                        }`}
+                      >
+                        <h3 className="text-sm font-semibold text-slate-900">
+                          {group.label}
+                        </h3>
+                        <span className="flex shrink-0 items-center gap-2 text-xs text-slate-500">
+                          {group.bids.length} bid
+                          {group.bids.length === 1 ? "" : "s"}
+                          <span
+                            aria-hidden
+                            className={`text-slate-500 transition-transform ${
+                              expanded ? "rotate-180" : ""
+                            }`}
                           >
-                            <span className="w-6 shrink-0 text-xs font-medium text-slate-400">
-                              {index + 1}
-                            </span>
-                            <span className="min-w-0 flex-1">
-                              <a
-                                href={bid.url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="block truncate text-sm font-medium text-sky-700 hover:underline"
+                            ▾
+                          </span>
+                        </span>
+                      </button>
+                      {expanded ? (
+                        <ul className="divide-y divide-slate-100">
+                          {group.bids.map((bid, index) => {
+                            const isOwnBid =
+                              currentUser != null &&
+                              bid.user_id === currentUser.id;
+
+                            return (
+                              <li
+                                key={bid.id}
+                                className="flex items-center gap-3 px-4 py-3"
                               >
-                                {bid.url}
-                              </a>
-                              {bid.user_name ? (
-                                <span className="mt-0.5 block truncate text-xs text-slate-500">
-                                  {bid.user_name}
+                                <span className="w-6 shrink-0 text-xs font-medium text-slate-400">
+                                  {index + 1}
                                 </span>
-                              ) : null}
-                            </span>
-                            <div className="flex shrink-0 items-center gap-3">
-                              {bid.image ? (
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    setJobBid({ bid, number: index + 1 })
-                                  }
-                                  className="text-sm font-medium text-sky-700 underline-offset-2 transition hover:text-sky-900 hover:underline"
-                                >
-                                  Job
-                                </button>
-                              ) : null}
-                              {isOwnBid ? (
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    setSelectedBid({ bid, number: index + 1 })
-                                  }
-                                  className="text-sm font-medium text-slate-700 underline-offset-2 transition hover:text-slate-900 hover:underline"
-                                >
-                                  View Proposal
-                                </button>
-                              ) : null}
-                            </div>
-                          </li>
-                        );
-                      })}
-                    </ul>
-                  </section>
-                ))}
+                                <span className="min-w-0 flex-1">
+                                  <a
+                                    href={bid.url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="block truncate text-sm font-medium text-sky-700 hover:underline"
+                                  >
+                                    {bid.url}
+                                  </a>
+                                  {bid.user_name ? (
+                                    <span className="mt-0.5 block truncate text-xs text-slate-500">
+                                      {bid.user_name}
+                                    </span>
+                                  ) : null}
+                                </span>
+                                <div className="flex shrink-0 items-center gap-3">
+                                  {bid.image ? (
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setJobBid({ bid, number: index + 1 })
+                                      }
+                                      className="text-sm font-medium text-sky-700 underline-offset-2 transition hover:text-sky-900 hover:underline"
+                                    >
+                                      Job
+                                    </button>
+                                  ) : null}
+                                  {isOwnBid ? (
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setSelectedBid({
+                                          bid,
+                                          number: index + 1,
+                                        })
+                                      }
+                                      className="text-sm font-medium text-slate-700 underline-offset-2 transition hover:text-slate-900 hover:underline"
+                                    >
+                                      View Proposal
+                                    </button>
+                                  ) : null}
+                                </div>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      ) : null}
+                    </section>
+                  );
+                })}
               </div>
             )}
           </div>

@@ -6,6 +6,8 @@ const MEMBER_NAV_HREFS = [
   "/dashboard/report",
   "/dashboard/financial",
   "/dashboard/deposit",
+  "/dashboard/my-projects",
+  "/dashboard/eta",
   "/dashboard/settings",
 ] as const;
 
@@ -15,6 +17,8 @@ const SUB_BOSS_NAV_HREFS = [
   "/dashboard/report",
   "/dashboard/financial",
   "/dashboard/deposit",
+  "/dashboard/my-projects",
+  "/dashboard/eta",
   "/dashboard/settings",
 ] as const;
 
@@ -23,6 +27,7 @@ const BIG_BOSS_NAV_HREFS = [
   "/dashboard/team-bid",
   "/dashboard/team-report",
   "/dashboard/financial",
+  "/dashboard/eta",
   "/dashboard/plan",
   "/dashboard/users",
   "/dashboard/settings",

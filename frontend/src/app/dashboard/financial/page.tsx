@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   Bar,
   BarChart,
@@ -127,6 +128,24 @@ function formatDateKey(date: Date): string {
 
 function formatMonthDay(date: Date): string {
   return `${date.getMonth() + 1}/${date.getDate()}`;
+}
+
+function formatDepositDate(value: string): string {
+  return toLocalDate(value).toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
+}
+
+function buildDepositsByMemberId(deposits: Deposit[]): Map<number, Deposit[]> {
+  const map = new Map<number, Deposit[]>();
+  for (const deposit of deposits) {
+    const current = map.get(deposit.user_id) ?? [];
+    current.push(deposit);
+    map.set(deposit.user_id, current);
+  }
+  return map;
 }
 
 function parseDateKey(key: string): Date {
@@ -428,6 +447,93 @@ function MemberSpanCell({
   );
 }
 
+function MemberNameCell({
+  name,
+  history,
+  rowSpan,
+  className = "",
+}: {
+  name: string;
+  history: Deposit[];
+  rowSpan: number;
+  className?: string;
+}) {
+  const cellRef = useRef<HTMLTableCellElement>(null);
+  const [open, setOpen] = useState(false);
+  const [coords, setCoords] = useState({ top: 0, left: 0 });
+
+  function showTooltip() {
+    const rect = cellRef.current?.getBoundingClientRect();
+    if (!rect) return;
+
+    const width = 280;
+    const estimatedHeight = Math.min(256, 56 + history.length * 28);
+    let left = rect.right + 8;
+    if (left + width > window.innerWidth - 8) {
+      left = Math.max(8, rect.left - width - 8);
+    }
+    let top = rect.top;
+    if (top + estimatedHeight > window.innerHeight - 8) {
+      top = Math.max(8, window.innerHeight - estimatedHeight - 8);
+    }
+
+    setCoords({ top, left });
+    setOpen(true);
+  }
+
+  return (
+    <>
+      <td
+        ref={cellRef}
+        rowSpan={rowSpan}
+        onMouseEnter={showTooltip}
+        onMouseLeave={() => setOpen(false)}
+        className={`border-r border-slate-200 bg-white px-3 py-2.5 align-middle text-slate-900 ${className}`}
+      >
+        <div className="truncate cursor-default">{name}</div>
+      </td>
+      {open
+        ? createPortal(
+            <div
+              role="tooltip"
+              style={{ top: coords.top, left: coords.left }}
+              className="pointer-events-none fixed z-[200] w-[17.5rem] max-h-64 overflow-auto rounded-xl border border-slate-200 bg-white p-3 shadow-xl dark:border-slate-600 dark:bg-slate-900 dark:shadow-black/50"
+            >
+              <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                Deposit history · {name}
+              </p>
+              {history.length === 0 ? (
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  No deposits yet.
+                </p>
+              ) : (
+                <ul className="space-y-1.5">
+                  {history.map((deposit) => (
+                    <li
+                      key={deposit.id}
+                      className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-baseline gap-2 text-xs text-slate-700 dark:text-slate-200"
+                    >
+                      <span className="shrink-0 tabular-nums text-slate-500 dark:text-slate-400">
+                        {formatDepositDate(deposit.created_at)}
+                      </span>
+                      <span className="min-w-0 truncate font-medium">
+                        {deposit.project_name}
+                      </span>
+                      <span className="shrink-0 tabular-nums font-semibold text-slate-900 dark:text-slate-100">
+                        {formatBalance(Number(deposit.amount) || 0)}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>,
+            document.body,
+          )
+        : null}
+    </>
+  );
+}
+
 function MemberNamePriceTick({
   x,
   y,
@@ -584,6 +690,10 @@ export default function FinancialPage() {
   const weekColumns = useMemo(() => getTargetWeekColumns(target), [target]);
   const depositsByUser = useMemo(
     () => buildDepositsByUser(deposits),
+    [deposits],
+  );
+  const depositsByMemberId = useMemo(
+    () => buildDepositsByMemberId(deposits),
     [deposits],
   );
   const teamCharts = useMemo(
@@ -819,13 +929,14 @@ export default function FinancialPage() {
 
                                 {rowIndex === 0 ? (
                                   <>
-                                    <MemberSpanCell
+                                    <MemberNameCell
+                                      name={member.name}
+                                      history={
+                                        depositsByMemberId.get(member.id) ?? []
+                                      }
                                       rowSpan={rowSpan}
-                                      title={member.name}
                                       className={`${MEMBER_COLUMN_WIDTH.Name} font-medium`}
-                                    >
-                                      {member.name}
-                                    </MemberSpanCell>
+                                    />
                                   <MemberSpanCell
                                     rowSpan={rowSpan}
                                     truncate={false}

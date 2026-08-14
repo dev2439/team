@@ -6,12 +6,21 @@ import { BidImageModal } from "@/components/BidImageModal";
 import { fetchTeamBids, type TeamBid } from "@/lib/bids";
 import { fetchSubTeams, type SubTeam } from "@/lib/sub-teams";
 
-function dayKeyFromCreatedAt(value: string): string {
-  const date = new Date(value);
+const TEAM_BIDS_POLL_MS = 4000;
+
+function dayKeyFromDate(date: Date): string {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+function dayKeyFromCreatedAt(value: string): string {
+  return dayKeyFromDate(new Date(value));
+}
+
+function todayDayKey(): string {
+  return dayKeyFromDate(new Date());
 }
 
 function formatDayLabel(dayKey: string): string {
@@ -110,18 +119,45 @@ export default function TeamBidPage() {
     bid: TeamBid;
     number: number;
   } | null>(null);
+  const [dayExpandedOverrides, setDayExpandedOverrides] = useState<
+    Record<string, boolean>
+  >({});
 
-  const loadData = useCallback(async () => {
+  function isDayExpanded(dayKey: string): boolean {
+    if (Object.prototype.hasOwnProperty.call(dayExpandedOverrides, dayKey)) {
+      return dayExpandedOverrides[dayKey]!;
+    }
+    return dayKey === todayDayKey();
+  }
+
+  function toggleDayExpanded(dayKey: string) {
+    setDayExpandedOverrides((current) => ({
+      ...current,
+      [dayKey]: !isDayExpanded(dayKey),
+    }));
+  }
+
+  const loadData = useCallback(async (options?: { silent?: boolean }) => {
+    const silent = options?.silent ?? false;
     try {
-      const [nextTeams, nextBids] = await Promise.all([
-        fetchSubTeams(),
-        fetchTeamBids(),
-      ]);
-      setTeams(nextTeams);
-      setBids(nextBids);
-      setError(null);
+      if (silent) {
+        const nextBids = await fetchTeamBids();
+        setBids(nextBids);
+      } else {
+        const [nextTeams, nextBids] = await Promise.all([
+          fetchSubTeams(),
+          fetchTeamBids(),
+        ]);
+        setTeams(nextTeams);
+        setBids(nextBids);
+        setError(null);
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load team bids");
+      if (!silent) {
+        setError(
+          err instanceof Error ? err.message : "Failed to load team bids",
+        );
+      }
     } finally {
       setLoading(false);
     }
@@ -129,6 +165,22 @@ export default function TeamBidPage() {
 
   useEffect(() => {
     void loadData();
+
+    const timer = window.setInterval(() => {
+      void loadData({ silent: true });
+    }, TEAM_BIDS_POLL_MS);
+
+    const onFocus = () => {
+      void loadData({ silent: true });
+    };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onFocus);
+
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onFocus);
+    };
   }, [loadData]);
 
   const columnTeams = useMemo<ColumnTeam[]>(() => {
@@ -215,65 +267,99 @@ export default function TeamBidPage() {
         </div>
       ) : (
         <div className="flex flex-col gap-6">
-          {dayGroups.map((group) => (
-            <section
-              key={group.dayKey}
-              className="overflow-hidden rounded-2xl border border-slate-200 bg-white"
-            >
-              <div className="border-b border-slate-200 bg-slate-50 px-4 py-3">
-                <h2 className="text-sm font-semibold text-slate-900">
-                  {formatDayLabel(group.dayKey)}
-                </h2>
-              </div>
+          {dayGroups.map((group) => {
+            const expanded = isDayExpanded(group.dayKey);
+            const bidCount =
+              group.unassigned.length +
+              [...group.bidsByTeamId.values()].reduce(
+                (sum, list) => sum + list.length,
+                0,
+              );
 
-              <div className="grid gap-0 lg:grid-cols-2">
-                {columnTeams.map((team, index) => {
-                  const teamBids = group.bidsByTeamId.get(team.id) ?? [];
-
-                  return (
-                    <div
-                      key={team.id}
-                      className={`min-w-0 ${
-                        index === 0 && columnTeams.length > 1
-                          ? "border-b border-slate-200 lg:border-b-0 lg:border-r"
-                          : ""
-                      }`}
-                    >
-                      <div className="border-b border-slate-100 px-4 py-2.5">
-                        <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                          {team.name}
-                        </h3>
-                        <p className="mt-0.5 text-xs text-slate-400">
-                          {teamBids.length} bid
-                          {teamBids.length === 1 ? "" : "s"}
-                        </p>
-                      </div>
-                      <BidUrlList
-                        bids={teamBids}
-                        onViewProposal={openProposal}
-                        onViewJob={openJob}
-                      />
-                    </div>
-                  );
-                })}
-              </div>
-
-              {group.unassigned.length > 0 ? (
-                <div className="border-t border-slate-200 px-4 py-3">
-                  <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                    Unassigned
-                  </h3>
-                  <div className="overflow-hidden rounded-xl border border-slate-100">
-                    <BidUrlList
-                      bids={group.unassigned}
-                      onViewProposal={openProposal}
-                      onViewJob={openJob}
-                    />
+            return (
+              <section
+                key={group.dayKey}
+                className="overflow-hidden rounded-2xl border border-slate-200 bg-white"
+              >
+                <button
+                  type="button"
+                  onClick={() => toggleDayExpanded(group.dayKey)}
+                  aria-expanded={expanded}
+                  className={`flex w-full items-center justify-between gap-3 bg-slate-50 px-4 py-3 text-left transition hover:bg-slate-100 ${
+                    expanded ? "border-b border-slate-200" : ""
+                  }`}
+                >
+                  <div className="min-w-0">
+                    <h2 className="text-sm font-semibold text-slate-900">
+                      {formatDayLabel(group.dayKey)}
+                    </h2>
+                    <p className="mt-0.5 text-xs text-slate-500">
+                      {bidCount} bid{bidCount === 1 ? "" : "s"}
+                    </p>
                   </div>
-                </div>
-              ) : null}
-            </section>
-          ))}
+                  <span
+                    aria-hidden
+                    className={`shrink-0 text-slate-500 transition-transform ${
+                      expanded ? "rotate-180" : ""
+                    }`}
+                  >
+                    ▾
+                  </span>
+                </button>
+
+                {expanded ? (
+                  <>
+                    <div className="grid gap-0 lg:grid-cols-2">
+                      {columnTeams.map((team, index) => {
+                        const teamBids = group.bidsByTeamId.get(team.id) ?? [];
+
+                        return (
+                          <div
+                            key={team.id}
+                            className={`min-w-0 ${
+                              index === 0 && columnTeams.length > 1
+                                ? "border-b border-slate-200 lg:border-b-0 lg:border-r"
+                                : ""
+                            }`}
+                          >
+                            <div className="border-b border-slate-100 px-4 py-2.5">
+                              <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                {team.name}
+                              </h3>
+                              <p className="mt-0.5 text-xs text-slate-400">
+                                {teamBids.length} bid
+                                {teamBids.length === 1 ? "" : "s"}
+                              </p>
+                            </div>
+                            <BidUrlList
+                              bids={teamBids}
+                              onViewProposal={openProposal}
+                              onViewJob={openJob}
+                            />
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {group.unassigned.length > 0 ? (
+                      <div className="border-t border-slate-200 px-4 py-3">
+                        <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                          Unassigned
+                        </h3>
+                        <div className="overflow-hidden rounded-xl border border-slate-100">
+                          <BidUrlList
+                            bids={group.unassigned}
+                            onViewProposal={openProposal}
+                            onViewJob={openJob}
+                          />
+                        </div>
+                      </div>
+                    ) : null}
+                  </>
+                ) : null}
+              </section>
+            );
+          })}
         </div>
       )}
 

@@ -31,7 +31,9 @@ import {
   listFinancialInRange,
   upsertFinancial,
 } from "./financials.ts";
-import { createDeposit, listDeposits } from "./deposits.ts";
+import { createDeposit, listDeposits, projectOwnedByUser as depositProjectOwnedByUser } from "./deposits.ts";
+import { createProject, deleteProjectForUser, listProjects, listProjectsForUser } from "./projects.ts";
+import { upsertEta, listEtas, projectOwnedByUser } from "./etas.ts";
 import {
   listUnreadBidNotifications,
   markBidNotificationsRead,
@@ -603,8 +605,7 @@ const server = createServer(async (req, res) => {
         return;
       }
 
-      const projectName =
-        typeof body?.project_name === "string" ? body.project_name.trim() : "";
+      const projectId = Math.trunc(Number(body?.project_id));
       const amount = Number(body?.amount);
       const userIdRaw = body?.user_id;
       const parsedBodyUserId =
@@ -619,8 +620,8 @@ const server = createServer(async (req, res) => {
         ? parsedBodyUserId
         : Number(payload.sub);
 
-      if (!projectName) {
-        sendJson(req, res, 400, { error: "project_name is required" });
+      if (!Number.isFinite(projectId) || projectId <= 0) {
+        sendJson(req, res, 400, { error: "project_id is required" });
         return;
       }
 
@@ -641,12 +642,184 @@ const server = createServer(async (req, res) => {
         return;
       }
 
+      const ownsProject = await depositProjectOwnedByUser(
+        projectId,
+        targetUserId,
+      );
+      if (!ownsProject) {
+        sendJson(req, res, 400, {
+          error: "project_id must belong to the deposit user",
+        });
+        return;
+      }
+
       const deposit = await createDeposit({
         userId: targetUserId,
-        projectName,
+        projectId,
         amount,
       });
       sendJson(req, res, 201, { deposit });
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/projects") {
+      const payload = getAuthPayload(req);
+      if (!payload) {
+        sendJson(req, res, 401, { error: "Unauthorized" });
+        return;
+      }
+
+      const projects = await listProjects();
+      sendJson(req, res, 200, { projects });
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/projects/mine") {
+      const payload = getAuthPayload(req);
+      if (!payload) {
+        sendJson(req, res, 401, { error: "Unauthorized" });
+        return;
+      }
+
+      const userId = Math.trunc(Number(payload.sub));
+      if (!Number.isFinite(userId) || userId <= 0) {
+        sendJson(req, res, 401, { error: "Unauthorized" });
+        return;
+      }
+
+      const projects = await listProjectsForUser(userId);
+      sendJson(req, res, 200, { projects });
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/projects") {
+      const payload = getAuthPayload(req);
+      if (!payload) {
+        sendJson(req, res, 401, { error: "Unauthorized" });
+        return;
+      }
+
+      let body: Record<string, unknown> | null;
+      try {
+        body = await readJsonBody(req);
+      } catch {
+        sendJson(req, res, 400, { error: "Invalid JSON body" });
+        return;
+      }
+
+      const name = typeof body?.name === "string" ? body.name.trim() : "";
+
+      if (!name) {
+        sendJson(req, res, 400, { error: "name is required" });
+        return;
+      }
+
+      const userId = Math.trunc(Number(payload.sub));
+      if (!Number.isFinite(userId) || userId <= 0) {
+        sendJson(req, res, 401, { error: "Unauthorized" });
+        return;
+      }
+
+      const project = await createProject({
+        userId,
+        name,
+      });
+      sendJson(req, res, 201, { project });
+      return;
+    }
+
+    {
+      const projectMatch = url.pathname.match(/^\/api\/projects\/(\d+)$/);
+      if (req.method === "DELETE" && projectMatch) {
+        const payload = getAuthPayload(req);
+        if (!payload) {
+          sendJson(req, res, 401, { error: "Unauthorized" });
+          return;
+        }
+
+        const userId = Math.trunc(Number(payload.sub));
+        if (!Number.isFinite(userId) || userId <= 0) {
+          sendJson(req, res, 401, { error: "Unauthorized" });
+          return;
+        }
+
+        const projectId = Math.trunc(Number(projectMatch[1]));
+        if (!Number.isFinite(projectId) || projectId <= 0) {
+          sendJson(req, res, 400, { error: "Invalid project id" });
+          return;
+        }
+
+        const deleted = await deleteProjectForUser(projectId, userId);
+        if (!deleted) {
+          sendJson(req, res, 404, { error: "Project not found" });
+          return;
+        }
+
+        sendJson(req, res, 200, { ok: true });
+        return;
+      }
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/etas") {
+      const payload = getAuthPayload(req);
+      if (!payload) {
+        sendJson(req, res, 401, { error: "Unauthorized" });
+        return;
+      }
+
+      const etas = await listEtas();
+      sendJson(req, res, 200, { etas });
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/etas") {
+      const payload = getAuthPayload(req);
+      if (!payload) {
+        sendJson(req, res, 401, { error: "Unauthorized" });
+        return;
+      }
+
+      let body: Record<string, unknown> | null;
+      try {
+        body = await readJsonBody(req);
+      } catch {
+        sendJson(req, res, 400, { error: "Invalid JSON body" });
+        return;
+      }
+
+      const userId = Math.trunc(Number(payload.sub));
+      if (!Number.isFinite(userId) || userId <= 0) {
+        sendJson(req, res, 401, { error: "Unauthorized" });
+        return;
+      }
+
+      const projectId = Math.trunc(Number(body?.project_id));
+      const amount = Number(body?.amount);
+
+      if (!Number.isFinite(projectId) || projectId <= 0) {
+        sendJson(req, res, 400, { error: "project_id is required" });
+        return;
+      }
+
+      if (!Number.isFinite(amount)) {
+        sendJson(req, res, 400, { error: "amount must be a valid number" });
+        return;
+      }
+
+      const ownsProject = await projectOwnedByUser(projectId, userId);
+      if (!ownsProject) {
+        sendJson(req, res, 400, {
+          error: "project_id must be one of your projects",
+        });
+        return;
+      }
+
+      const eta = await upsertEta({
+        projectId,
+        userId,
+        amount,
+      });
+      sendJson(req, res, 200, { eta });
       return;
     }
 
@@ -701,7 +874,7 @@ const server = createServer(async (req, res) => {
 
       const deposit = await createDeposit({
         userId: targetUserId,
-        projectName: "Bid",
+        projectId: null,
         amount,
       });
       sendJson(req, res, 201, { deposit });

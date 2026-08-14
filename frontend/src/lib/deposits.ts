@@ -3,6 +3,8 @@ import { getApiBase, getToken } from "@/lib/auth";
 export type Deposit = {
   id: number;
   user_id: number;
+  project_id: number | null;
+  /** Resolved project name, or "Bid" when project_id is null. */
   project_name: string;
   amount: number;
   created_at: string;
@@ -48,16 +50,16 @@ export async function fetchDeposits(): Promise<Deposit[]> {
 }
 
 export async function createDeposit(input: {
-  project_name: string;
+  project_id: number;
   amount: number;
   user_id?: number;
 }): Promise<Deposit> {
   const body: {
-    project_name: string;
+    project_id: number;
     amount: number;
     user_id?: number;
   } = {
-    project_name: input.project_name,
+    project_id: input.project_id,
     amount: input.amount,
   };
 

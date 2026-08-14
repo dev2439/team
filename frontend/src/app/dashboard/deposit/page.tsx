@@ -1,8 +1,9 @@
 "use client";
 
 import type { FormEvent } from "react";
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { createDeposit } from "@/lib/deposits";
+import { fetchMyProjects, type Project } from "@/lib/projects";
 
 const MAX_AMOUNT = 10000;
 
@@ -20,20 +21,45 @@ function isAmountWithinMax(raw: string): boolean {
 }
 
 export default function DepositPage() {
-  const [projectName, setProjectName] = useState("");
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [projectId, setProjectId] = useState("");
   const [amount, setAmount] = useState("");
+  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+
+  const loadProjects = useCallback(async () => {
+    try {
+      const rows = await fetchMyProjects();
+      setProjects(rows);
+      setProjectId((current) => {
+        if (rows.length === 0) return "";
+        if (current && rows.some((row) => String(row.id) === current)) {
+          return current;
+        }
+        return String(rows[0]!.id);
+      });
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load projects");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadProjects();
+  }, [loadProjects]);
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
     setMessage(null);
 
-    const name = projectName.trim();
-    if (!name) {
-      setError("Project name is required");
+    const selectedProjectId = Math.trunc(Number(projectId));
+    if (!Number.isFinite(selectedProjectId) || selectedProjectId <= 0) {
+      setError("Select a project");
       return;
     }
 
@@ -50,14 +76,13 @@ export default function DepositPage() {
     setSaving(true);
     try {
       await createDeposit({
-        project_name: name,
+        project_id: selectedProjectId,
         amount: amountValue,
       });
-      setProjectName("");
       setAmount("");
-      setMessage("Project saved");
+      setMessage("Deposit saved");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save project");
+      setError(err instanceof Error ? err.message : "Failed to save deposit");
     } finally {
       setSaving(false);
     }
@@ -75,63 +100,77 @@ export default function DepositPage() {
       <div className="rounded-2xl border border-slate-200 bg-white p-5">
         <h2 className="text-base font-semibold text-slate-900">Project</h2>
         <p className="mt-1 mb-4 text-sm text-slate-600">
-          Enter a project name and amount to save to the deposit table.
+          Select one of your projects and enter an amount.
         </p>
 
-        <form onSubmit={onSubmit} className="max-w-md space-y-3">
-          <label className="block">
-            <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-500">
-              Project Name
-            </span>
-            <input
-              type="text"
-              name="projectName"
-              required
-              value={projectName}
-              onChange={(event) => {
-                setMessage(null);
-                setProjectName(event.target.value);
-              }}
-              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-slate-900 outline-none transition focus:border-slate-400 focus:ring-1 focus:ring-slate-200"
-            />
-          </label>
+        {loading ? (
+          <p className="text-sm text-slate-500">Loading projects…</p>
+        ) : (
+          <form onSubmit={onSubmit} className="max-w-md space-y-3">
+            <label className="block">
+              <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Project
+              </span>
+              <select
+                name="projectId"
+                required
+                value={projectId}
+                disabled={projects.length === 0}
+                onChange={(event) => {
+                  setMessage(null);
+                  setProjectId(event.target.value);
+                }}
+                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-slate-900 outline-none transition focus:border-slate-400 focus:ring-1 focus:ring-slate-200 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
+              >
+                {projects.length === 0 ? (
+                  <option value="">No projects yet</option>
+                ) : (
+                  projects.map((project) => (
+                    <option key={project.id} value={project.id}>
+                      {project.name}
+                    </option>
+                  ))
+                )}
+              </select>
+            </label>
 
-          <label className="block">
-            <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-500">
-              Amount
-            </span>
-            <input
-              type="text"
-              name="amount"
-              inputMode="decimal"
-              required
-              value={amount}
-              onChange={(event) => {
-                const next = event.target.value;
-                if (!isDoubleInput(next)) return;
-                if (!isAmountWithinMax(next)) return;
-                setMessage(null);
-                setAmount(next);
-              }}
-              max={MAX_AMOUNT}
-              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-slate-900 outline-none transition focus:border-slate-400 focus:ring-1 focus:ring-slate-200"
-            />
-          </label>
+            <label className="block">
+              <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Amount
+              </span>
+              <input
+                type="text"
+                name="amount"
+                inputMode="decimal"
+                required
+                value={amount}
+                onChange={(event) => {
+                  const next = event.target.value;
+                  if (!isDoubleInput(next)) return;
+                  if (!isAmountWithinMax(next)) return;
+                  setMessage(null);
+                  setAmount(next);
+                }}
+                max={MAX_AMOUNT}
+                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-slate-900 outline-none transition focus:border-slate-400 focus:ring-1 focus:ring-slate-200"
+              />
+            </label>
 
-          <div className="flex flex-wrap items-center gap-3 pt-2">
-            <button
-              type="submit"
-              disabled={saving}
-              className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {saving ? "Saving…" : "Save"}
-            </button>
-            {message && (
-              <span className="text-sm text-emerald-600">{message}</span>
-            )}
-            {error && <span className="text-sm text-red-600">{error}</span>}
-          </div>
-        </form>
+            <div className="flex flex-wrap items-center gap-3 pt-2">
+              <button
+                type="submit"
+                disabled={saving || projects.length === 0}
+                className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {saving ? "Saving…" : "Save"}
+              </button>
+              {message && (
+                <span className="text-sm text-emerald-600">{message}</span>
+              )}
+              {error && <span className="text-sm text-red-600">{error}</span>}
+            </div>
+          </form>
+        )}
       </div>
     </div>
   );

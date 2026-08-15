@@ -15,6 +15,13 @@ import {
 import { getAuthPayload } from "./auth/middleware.ts";
 import { isUserRole } from "./types/user.ts";
 import { createBid, listBidsForSubTeam, listTeamBids } from "./bids.ts";
+import {
+  createTestBid,
+  createTestBidProposal,
+  getProposalForParentAndUser,
+  listTestBidProposals,
+  listTestBids,
+} from "./test-bids.ts";
 import { checkDatabase, closePool } from "./db.ts";
 import { readJsonBody } from "./http.ts";
 import {
@@ -256,8 +263,23 @@ const server = createServer(async (req, res) => {
       }
 
       if (
-        image &&
-        (!image.startsWith("data:image/") || image.length > 3_500_000)
+        !/^https:\/\/www\.upwork\.com\/jobs\/~\d+$/.test(bidUrlRaw)
+      ) {
+        sendJson(req, res, 400, {
+          error:
+            "URL must match https://www.upwork.com/jobs/~022088289986163309012",
+        });
+        return;
+      }
+
+      if (!image) {
+        sendJson(req, res, 400, { error: "Image is required" });
+        return;
+      }
+
+      if (
+        !image.startsWith("data:image/") ||
+        image.length > 3_500_000
       ) {
         sendJson(req, res, 400, {
           error: "image must be a data URL under ~2.5MB",
@@ -265,25 +287,163 @@ const server = createServer(async (req, res) => {
         return;
       }
 
-      const bidUrl = /^https?:\/\//i.test(bidUrlRaw)
-        ? bidUrlRaw
-        : `https://${bidUrlRaw}`;
-
-      try {
-        new URL(bidUrl);
-      } catch {
-        sendJson(req, res, 400, { error: "URL must be a valid URL" });
-        return;
-      }
-
       const bid = await createBid({
         userId: payload.sub,
-        url: bidUrl,
+        url: bidUrlRaw,
         proposal,
         image,
       });
       sendJson(req, res, 201, { bid });
       return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/test-bids") {
+      const payload = getAuthPayload(req);
+      if (!payload) {
+        sendJson(req, res, 401, { error: "Unauthorized" });
+        return;
+      }
+
+      const testBids = await listTestBids(payload.sub);
+      sendJson(req, res, 200, { test_bids: testBids });
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/test-bid-proposals") {
+      const payload = getAuthPayload(req);
+      if (!payload) {
+        sendJson(req, res, 401, { error: "Unauthorized" });
+        return;
+      }
+
+      // All users' proposals for Test Result.
+      const proposals = await listTestBidProposals();
+      sendJson(req, res, 200, { proposals });
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/test-bids") {
+      const payload = getAuthPayload(req);
+      if (!payload) {
+        sendJson(req, res, 401, { error: "Unauthorized" });
+        return;
+      }
+
+      let body: Record<string, unknown> | null;
+      try {
+        body = await readJsonBody(req);
+      } catch {
+        sendJson(req, res, 400, { error: "Invalid JSON body" });
+        return;
+      }
+
+      const bidUrlRaw = typeof body?.url === "string" ? body.url.trim() : "";
+      const imageRaw =
+        typeof body?.image === "string" ? body.image.trim() : "";
+      const image = imageRaw || null;
+
+      if (!bidUrlRaw) {
+        sendJson(req, res, 400, { error: "URL is required" });
+        return;
+      }
+
+      if (
+        !/^https:\/\/www\.upwork\.com\/jobs\/~\d+$/.test(bidUrlRaw)
+      ) {
+        sendJson(req, res, 400, {
+          error:
+            "URL must match https://www.upwork.com/jobs/~022088289986163309012",
+        });
+        return;
+      }
+
+      if (!image) {
+        sendJson(req, res, 400, { error: "Image is required" });
+        return;
+      }
+
+      if (
+        !image.startsWith("data:image/") ||
+        image.length > 3_500_000
+      ) {
+        sendJson(req, res, 400, {
+          error: "image must be a data URL under ~2.5MB",
+        });
+        return;
+      }
+
+      try {
+        const testBid = await createTestBid({
+          url: bidUrlRaw,
+          image,
+        });
+        sendJson(req, res, 201, { test_bid: testBid });
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : "Failed to create test bid";
+        sendJson(req, res, 400, { error: message });
+      }
+      return;
+    }
+
+    {
+      const proposalMatch = /^\/api\/test-bids\/(\d+)\/proposals$/.exec(
+        url.pathname,
+      );
+      if (proposalMatch) {
+        const payload = getAuthPayload(req);
+        if (!payload) {
+          sendJson(req, res, 401, { error: "Unauthorized" });
+          return;
+        }
+
+        const parentId = Number(proposalMatch[1]);
+        if (!Number.isFinite(parentId) || parentId <= 0) {
+          sendJson(req, res, 400, { error: "Invalid test bid id" });
+          return;
+        }
+
+        if (req.method === "GET") {
+          const proposal = await getProposalForParentAndUser(
+            parentId,
+            payload.sub,
+          );
+          sendJson(req, res, 200, { proposal });
+          return;
+        }
+
+        if (req.method === "POST") {
+          let body: Record<string, unknown> | null;
+          try {
+            body = await readJsonBody(req);
+          } catch {
+            sendJson(req, res, 400, { error: "Invalid JSON body" });
+            return;
+          }
+
+          const proposalText =
+            typeof body?.proposal === "string" ? body.proposal.trim() : "";
+          if (!proposalText) {
+            sendJson(req, res, 400, { error: "Proposal is required" });
+            return;
+          }
+
+          try {
+            const row = await createTestBidProposal({
+              parentId,
+              userId: payload.sub,
+              proposal: proposalText,
+            });
+            sendJson(req, res, 201, { proposal: row });
+          } catch (err) {
+            const message =
+              err instanceof Error ? err.message : "Failed to save proposal";
+            const status = message.includes("not found") ? 404 : 400;
+            sendJson(req, res, status, { error: message });
+          }
+          return;
+        }
+      }
     }
 
     if (req.method === "GET" && url.pathname === "/api/notifications") {
@@ -436,7 +596,7 @@ const server = createServer(async (req, res) => {
 
         if (roleRaw !== undefined && !isUserRole(roleRaw)) {
           sendJson(req, res, 400, {
-            error: "role must be Member, SubBoss, or BigBoss",
+            error: "role must be Member, SubBoss, BigBoss, or Tester",
           });
           return;
         }

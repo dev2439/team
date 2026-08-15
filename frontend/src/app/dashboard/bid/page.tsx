@@ -11,11 +11,12 @@ import { createBidRequest, fetchBids, type Bid } from "@/lib/bids";
 
 const SUB_TEAM_BIDS_POLL_MS = 4000;
 
-function normalizeUrl(value: string): string {
-  const trimmed = value.trim();
-  if (!trimmed) return trimmed;
-  if (/^https?:\/\//i.test(trimmed)) return trimmed;
-  return `https://${trimmed}`;
+/** Example: https://www.upwork.com/jobs/~022088289986163309012 */
+const UPWORK_JOB_URL_PATTERN =
+  /^https:\/\/www\.upwork\.com\/jobs\/~\d+$/;
+
+function isValidUpworkJobUrl(value: string): boolean {
+  return UPWORK_JOB_URL_PATTERN.test(value.trim());
 }
 
 function dayKeyFromDate(date: Date): string {
@@ -142,11 +143,25 @@ export default function BidPage() {
     event.preventDefault();
     setError(null);
     setSuccess(null);
+
+    const bidUrl = url.trim();
+    if (!isValidUpworkJobUrl(bidUrl)) {
+      setError(
+        "URL must match https://www.upwork.com/jobs/~022088289986163309012",
+      );
+      return;
+    }
+
+    if (!image) {
+      setError("Paste a job image before saving");
+      return;
+    }
+
     setSubmitting(true);
 
     try {
       const bid = await createBidRequest({
-        url: normalizeUrl(url),
+        url: bidUrl,
         proposal: proposal.trim(),
         image,
       });
@@ -187,8 +202,13 @@ export default function BidPage() {
                 name="url"
                 required
                 value={url}
-                onChange={(e) => setUrl(e.target.value)}
-                placeholder="https://example.com/job"
+                onChange={(e) => {
+                  setSuccess(null);
+                  setUrl(e.target.value);
+                }}
+                placeholder="https://www.upwork.com/jobs/~022088289986163309012"
+                pattern="https://www\.upwork\.com/jobs/~\d+"
+                title="https://www.upwork.com/jobs/~ followed by digits"
                 className="rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-slate-900 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-200"
               />
             </label>
@@ -218,7 +238,7 @@ export default function BidPage() {
 
             <button
               type="submit"
-              disabled={submitting}
+              disabled={submitting || !image}
               className="shrink-0 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {submitting ? "Saving…" : "Submit"}

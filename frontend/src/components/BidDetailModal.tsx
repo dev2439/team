@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { MarkdownView } from "@/components/MarkdownView";
 import type { Bid } from "@/lib/bids";
 
 type BidDetailModalProps = {
@@ -117,12 +118,13 @@ export function BidDetailModal({
           tabIndex={0}
           className="min-h-0 flex-1 overflow-y-auto px-5 py-4 outline-none"
         >
-          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+          <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500">
             Proposal
           </p>
-          <pre className="whitespace-pre-wrap break-words font-sans text-sm leading-6 text-slate-800">
-            {bid.proposal}
-          </pre>
+          <MarkdownView
+            content={bid.proposal}
+            className="rounded-xl border border-slate-100 bg-slate-50/60 px-4 py-3"
+          />
         </div>
       </div>
     </div>

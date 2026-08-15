@@ -9,7 +9,7 @@ function formatBalance(value: number | undefined): string {
   return String(Math.round(amount * 1000) / 1000);
 }
 
-const ROLE_OPTIONS = ["Member", "SubBoss", "BigBoss"] as const;
+const ROLE_OPTIONS = ["Member", "SubBoss", "BigBoss", "Tester"] as const;
 
 const selectClass =
   "w-full min-w-[9rem] rounded-md border border-slate-200 bg-white px-2 py-1.5 text-sm text-slate-800 outline-none transition focus:border-slate-400 focus:ring-1 focus:ring-slate-200 disabled:cursor-not-allowed disabled:opacity-60";

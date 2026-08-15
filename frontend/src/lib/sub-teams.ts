@@ -4,7 +4,7 @@ export type SubTeamMember = {
   id: number;
   name: string;
   email: string;
-  role: "Member" | "SubBoss" | "BigBoss";
+  role: "Member" | "SubBoss" | "BigBoss" | "Tester";
   balance: number;
 };
 

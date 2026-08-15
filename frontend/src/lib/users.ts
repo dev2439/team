@@ -1,6 +1,6 @@
 import { getApiBase, getToken } from "@/lib/auth";
 
-export type UserRole = "Member" | "SubBoss" | "BigBoss";
+export type UserRole = "Member" | "SubBoss" | "BigBoss" | "Tester";
 
 export type ListedUser = {
   id: number;

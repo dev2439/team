@@ -5,6 +5,10 @@ import { useRef, useState, type ClipboardEvent, type DragEvent } from "react";
 type ImagePasteAreaProps = {
   value: string | null;
   onChange: (value: string | null) => void;
+  /** Extra classes for the dashed drop zone (e.g. taller min-height). */
+  boxClassName?: string;
+  /** Max height for the preview image. */
+  previewMaxHeightClassName?: string;
 };
 
 const MAX_EDGE = 1600;
@@ -29,7 +33,12 @@ async function fileToDataUrl(file: File): Promise<string> {
   return canvas.toDataURL("image/jpeg", JPEG_QUALITY);
 }
 
-export function ImagePasteArea({ value, onChange }: ImagePasteAreaProps) {
+export function ImagePasteArea({
+  value,
+  onChange,
+  boxClassName = "",
+  previewMaxHeightClassName = "max-h-48",
+}: ImagePasteAreaProps) {
   const boxRef = useRef<HTMLDivElement>(null);
   const [focused, setFocused] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -77,7 +86,11 @@ export function ImagePasteArea({ value, onChange }: ImagePasteAreaProps) {
   }
 
   return (
-    <div className="flex shrink-0 flex-col gap-2 text-sm text-slate-700 dark:text-slate-300">
+    <div
+      className={`flex flex-col gap-2 text-sm text-slate-700 dark:text-slate-300 ${
+        boxClassName.includes("flex-1") ? "min-h-0 flex-1" : "shrink-0"
+      }`}
+    >
       <span className="font-medium">Image</span>
       <div
         ref={boxRef}
@@ -93,16 +106,16 @@ export function ImagePasteArea({ value, onChange }: ImagePasteAreaProps) {
           focused
             ? "border-sky-400 bg-sky-50/60 ring-2 ring-sky-200 dark:border-sky-500 dark:bg-sky-950/50 dark:ring-sky-800"
             : "border-slate-300 bg-slate-50 hover:border-slate-400 dark:border-slate-600 dark:bg-slate-900/80 dark:hover:border-slate-500"
-        }`}
+        } ${boxClassName}`}
       >
         {value ? (
-          <div className="flex flex-col gap-2">
-            <div className="rounded-lg bg-slate-900/90 p-2 dark:bg-black/50">
+          <div className="flex h-full flex-col gap-2">
+            <div className="min-h-0 flex-1 rounded-lg bg-slate-900/90 p-2 dark:bg-black/50">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={value}
                 alt="Pasted bid"
-                className="max-h-48 w-full rounded-md object-contain"
+                className={`${previewMaxHeightClassName} w-full rounded-md object-contain`}
               />
             </div>
             <div className="flex items-center justify-between gap-2">

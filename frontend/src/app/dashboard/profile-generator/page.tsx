@@ -46,12 +46,17 @@ export default function ProfileGeneratorPage() {
       setDocxUrl(url);
       setStatus("DOCX ready");
 
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = "upwork-profile.docx";
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
+      // Defer click so the object URL is registered; some browsers block
+      // immediate downloads after a long async wait.
+      window.setTimeout(() => {
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = "upwork-profile.docx";
+        link.rel = "noopener";
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+      }, 0);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Request failed");
     } finally {

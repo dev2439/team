@@ -46,6 +46,81 @@ function messageFromJson(text: string): string | null {
   return null;
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (Array.isArray(value) && value.length > 0) {
+    return asRecord(value[0]);
+  }
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  if ("json" in record && record.json && typeof record.json === "object") {
+    return asRecord(record.json);
+  }
+  if ("output" in record && record.output && typeof record.output === "object") {
+    return asRecord(record.output);
+  }
+  return record;
+}
+
+function bufferFromBase64Field(value: unknown): Buffer | null {
+  if (typeof value !== "string" || !value.trim()) {
+    return null;
+  }
+  const cleaned = value
+    .trim()
+    .replace(/^data:[^;]+;base64,/i, "")
+    .replace(/\s+/g, "");
+  try {
+    const buffer = Buffer.from(cleaned, "base64");
+    return isDocxBuffer(buffer) ? buffer : null;
+  } catch {
+    return null;
+  }
+}
+
+/** n8n may return the Word file as raw binary, or as JSON with a base64 field. */
+function extractDocxBuffer(buffer: Buffer, parsed: unknown): Buffer | null {
+  if (isDocxBuffer(buffer)) {
+    return buffer;
+  }
+
+  const record = asRecord(parsed);
+  if (!record) {
+    return null;
+  }
+
+  const candidates = [
+    record.docxBase64,
+    record.data,
+    record.file,
+    record.docx,
+    record.content,
+    record.base64,
+  ];
+
+  for (const candidate of candidates) {
+    const docx = bufferFromBase64Field(candidate);
+    if (docx) {
+      return docx;
+    }
+  }
+
+  if (record.binary && typeof record.binary === "object") {
+    const binary = record.binary as Record<string, unknown>;
+    for (const entry of Object.values(binary)) {
+      const row = asRecord(entry);
+      if (!row) continue;
+      const docx = bufferFromBase64Field(row.data ?? row.docxBase64);
+      if (docx) {
+        return docx;
+      }
+    }
+  }
+
+  return null;
+}
+
 export async function generateProfileDocx(
   payload: ProfileGeneratorInput,
 ): Promise<ProfileGeneratorResult> {
@@ -98,14 +173,26 @@ export async function generateProfileDocx(
     const buffer = Buffer.from(await webhookResponse.arrayBuffer());
     const text = buffer.toString("utf8");
 
+    let parsed: unknown = null;
+    if (contentType.includes("application/json") || text.trimStart().startsWith("{") || text.trimStart().startsWith("[")) {
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        parsed = null;
+      }
+    }
+
+    const extractedDocx = extractDocxBuffer(buffer, parsed);
+    if (extractedDocx) {
+      return { ok: true, buffer: extractedDocx };
+    }
+
     if (
-      contentType.includes(DOCX_MIME) ||
-      contentType.includes("application/octet-stream") ||
+      (contentType.includes(DOCX_MIME) ||
+        contentType.includes("application/octet-stream")) &&
       isDocxBuffer(buffer)
     ) {
-      if (isDocxBuffer(buffer)) {
-        return { ok: true, buffer };
-      }
+      return { ok: true, buffer };
     }
 
     const parsedMessage = messageFromJson(text);
@@ -133,13 +220,6 @@ export async function generateProfileDocx(
           text.trim() ||
           `Workflow failed with status ${webhookResponse.status}.`,
       };
-    }
-
-    let parsed: unknown = null;
-    try {
-      parsed = JSON.parse(text);
-    } catch {
-      parsed = null;
     }
 
     const profile = parseResumeProfile(parsed);

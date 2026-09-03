@@ -161,7 +161,7 @@ function sendBinary(
   res.end(body);
 }
 
-const server = createServer(async (req, res) => {
+async function handleRequest(req: IncomingMessage, res: ServerResponse) {
   req.on("error", () => {
     // Client aborted or reset the socket — ignore to avoid crashing the process.
   });
@@ -2126,7 +2126,9 @@ const server = createServer(async (req, res) => {
       res.end();
     }
   }
-});
+}
+
+const server = createServer(handleRequest);
 
 // Profile generator waits on n8n (~280s); keep request sockets open long enough.
 server.requestTimeout = 300_000;
@@ -2135,25 +2137,26 @@ server.keepAliveTimeout = 65_000;
 server.timeout = 0;
 
 const EVENT_NOTIFY_MS = 15_000;
-const eventNotifyTimer = setInterval(() => {
-  void notifyDueEvents().catch((err) => {
-    console.error("Failed to notify due events:", err);
-  });
-  void notifyDueBirthdays().catch((err) => {
-    console.error("Failed to notify due birthdays:", err);
-  });
-}, EVENT_NOTIFY_MS);
-eventNotifyTimer.unref?.();
+let eventNotifyTimer: ReturnType<typeof setInterval> | undefined;
+if (!process.env.VERCEL) {
+  eventNotifyTimer = setInterval(() => {
+    void notifyDueEvents().catch((err) => {
+      console.error("Failed to notify due events:", err);
+    });
+    void notifyDueBirthdays().catch((err) => {
+      console.error("Failed to notify due birthdays:", err);
+    });
+  }, EVENT_NOTIFY_MS);
+  eventNotifyTimer.unref?.();
+}
 
-if (process.env.VERCEL) {
-  server.listen(PORT);
-} else {
+if (!process.env.VERCEL) {
   server.listen(PORT, "0.0.0.0", () => {
     console.log(`Backend listening on http://0.0.0.0:${PORT}`);
   });
 }
 
-export default server;
+export default handleRequest;
 
 process.on("unhandledRejection", (err) => {
   console.error("Unhandled rejection:", err);
@@ -2165,7 +2168,7 @@ process.on("uncaughtException", (err) => {
 
 async function shutdown() {
   console.log("Shutting down…");
-  clearInterval(eventNotifyTimer);
+  if (eventNotifyTimer) clearInterval(eventNotifyTimer);
   server.close();
   await closePool();
   process.exit(0);

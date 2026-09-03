@@ -7,3 +7,5 @@ config.bat
 .pm2
 backend/.env
 frontend/certificates/
+.cursor/github.env
+.cursor/mcp.json

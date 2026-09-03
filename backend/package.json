@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "node --experimental-strip-types --experimental-transform-types src/index.ts",
-    "start": "tsx src/index.ts",
+    "start": "node --experimental-strip-types --experimental-transform-types src/index.ts",
     "db:setup": "node --experimental-strip-types --experimental-transform-types scripts/setup-db.ts",
     "db:migrate": "node --experimental-strip-types --experimental-transform-types scripts/migrate.ts",
     "db:seed": "node --experimental-strip-types --experimental-transform-types scripts/seed-demo-user.ts",
@@ -13,11 +13,10 @@
     "db:check": "node --experimental-strip-types --experimental-transform-types scripts/check-db.ts"
   },
   "dependencies": {
-    "docx": "^9.7.1",
     "pg": "^8.23.0",
-    "tsx": "^4.23.13"
+    "docx": "^9.7.1"
   },
   "engines": {
-    "node": "22.x"
+    "node": ">=22"
   }
 }

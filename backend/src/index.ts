@@ -161,7 +161,7 @@ function sendBinary(
   res.end(body);
 }
 
-async function handleRequest(req: IncomingMessage, res: ServerResponse) {
+const server = createServer(async (req, res) => {
   req.on("error", () => {
     // Client aborted or reset the socket — ignore to avoid crashing the process.
   });
@@ -2126,9 +2126,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse) {
       res.end();
     }
   }
-}
-
-const server = createServer(handleRequest);
+});
 
 // Profile generator waits on n8n (~280s); keep request sockets open long enough.
 server.requestTimeout = 300_000;
@@ -2137,26 +2135,19 @@ server.keepAliveTimeout = 65_000;
 server.timeout = 0;
 
 const EVENT_NOTIFY_MS = 15_000;
-let eventNotifyTimer: ReturnType<typeof setInterval> | undefined;
-if (!process.env.VERCEL) {
-  eventNotifyTimer = setInterval(() => {
-    void notifyDueEvents().catch((err) => {
-      console.error("Failed to notify due events:", err);
-    });
-    void notifyDueBirthdays().catch((err) => {
-      console.error("Failed to notify due birthdays:", err);
-    });
-  }, EVENT_NOTIFY_MS);
-  eventNotifyTimer.unref?.();
-}
-
-if (!process.env.VERCEL) {
-  server.listen(PORT, "0.0.0.0", () => {
-    console.log(`Backend listening on http://0.0.0.0:${PORT}`);
+const eventNotifyTimer = setInterval(() => {
+  void notifyDueEvents().catch((err) => {
+    console.error("Failed to notify due events:", err);
   });
-}
+  void notifyDueBirthdays().catch((err) => {
+    console.error("Failed to notify due birthdays:", err);
+  });
+}, EVENT_NOTIFY_MS);
+eventNotifyTimer.unref?.();
 
-export default handleRequest;
+server.listen(PORT, "0.0.0.0", () => {
+  console.log(`Backend listening on http://0.0.0.0:${PORT}`);
+});
 
 process.on("unhandledRejection", (err) => {
   console.error("Unhandled rejection:", err);
@@ -2168,7 +2159,7 @@ process.on("uncaughtException", (err) => {
 
 async function shutdown() {
   console.log("Shutting down…");
-  if (eventNotifyTimer) clearInterval(eventNotifyTimer);
+  clearInterval(eventNotifyTimer);
   server.close();
   await closePool();
   process.exit(0);

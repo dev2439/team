@@ -5,33 +5,6 @@ const { Pool } = pg;
 let pool: pg.Pool | null = null;
 let resetting: Promise<void> | null = null;
 
-function sslForConnection(connectionString: string): boolean | { rejectUnauthorized: boolean } | undefined {
-  try {
-    const url = new URL(connectionString);
-    const host = url.hostname;
-    const sslMode = (url.searchParams.get("sslmode") ?? "").toLowerCase();
-    if (
-      sslMode === "disable" ||
-      host === "127.0.0.1" ||
-      host === "localhost"
-    ) {
-      return undefined;
-    }
-    if (sslMode === "require" || sslMode === "prefer" || sslMode === "verify-ca") {
-      return { rejectUnauthorized: false };
-    }
-    if (sslMode === "verify-full") {
-      return { rejectUnauthorized: true };
-    }
-    if (process.env.VERCEL) {
-      return { rejectUnauthorized: false };
-    }
-    return undefined;
-  } catch {
-    return process.env.VERCEL ? { rejectUnauthorized: false } : undefined;
-  }
-}
-
 /** Prefer IPv4 — `localhost` can resolve to ::1 while Postgres only listens on 127.0.0.1. */
 function normalizeConnectionString(raw: string): string {
   try {
@@ -78,19 +51,17 @@ function createPool(): pg.Pool {
     );
   }
 
-  const normalized = normalizeConnectionString(connectionString);
-  const vercel = Boolean(process.env.VERCEL);
-
   const next = new Pool({
-    connectionString: normalized,
-    max: vercel ? 1 : Number(process.env.DATABASE_POOL_MAX) || 20,
+    connectionString: normalizeConnectionString(connectionString),
+    max: Number(process.env.DATABASE_POOL_MAX) || 20,
+    // Recycle idle clients before OS/NAT drops them.
     idleTimeoutMillis: Number(process.env.DATABASE_IDLE_TIMEOUT_MS) || 10_000,
     connectionTimeoutMillis:
       Number(process.env.DATABASE_CONNECT_TIMEOUT_MS) || 5_000,
     allowExitOnIdle: false,
     keepAlive: true,
     keepAliveInitialDelayMillis: 10_000,
-    ssl: sslForConnection(normalized),
+    // Fail slow queries instead of holding pool slots forever.
     options: "-c statement_timeout=15000",
   });
 

@@ -9,6 +9,3 @@ backend/.env
 frontend/certificates/
 .cursor/github.env
 .cursor/mcp.json
-.vercel
-frontend/.vercel
-backend/.vercel

@@ -14,7 +14,15 @@ export type DepositCreateInput = {
   userId: number;
   projectId: number | null;
   amount: number;
+  /** Optional; when set, used as deposit.created_at (BigBoss past-week Bid edits). */
+  createdAt?: string | Date;
 };
+
+/** Avoid float noise (e.g. 5.2 → 5.2000000000003); matches NUMERIC(14, 3). */
+export function roundDepositAmount(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.round((value + Number.EPSILON) * 1000) / 1000;
+}
 
 function mapRow(row: DepositRow): Deposit {
   const projectId =
@@ -27,7 +35,7 @@ function mapRow(row: DepositRow): Deposit {
       projectId == null
         ? "Bid"
         : String(row.project_name ?? "").trim() || `Project #${projectId}`,
-    amount: Number(row.amount),
+    amount: roundDepositAmount(Number(row.amount)),
     created_at:
       row.created_at instanceof Date
         ? row.created_at.toISOString()
@@ -50,11 +58,27 @@ async function loadDepositById(id: number): Promise<Deposit> {
 export async function createDeposit(
   input: DepositCreateInput,
 ): Promise<Deposit> {
+  const amount = roundDepositAmount(input.amount);
+
+  if (input.createdAt != null) {
+    const createdAt =
+      input.createdAt instanceof Date
+        ? input.createdAt.toISOString()
+        : String(input.createdAt);
+    const { rows } = await query<DepositRow>(
+      `INSERT INTO deposit (user_id, project_id, amount, created_at)
+       VALUES ($1, $2, ROUND($3::numeric, 3), $4::timestamptz)
+       RETURNING id, user_id, project_id, amount, created_at`,
+      [input.userId, input.projectId, amount, createdAt],
+    );
+    return loadDepositById(rows[0]!.id);
+  }
+
   const { rows } = await query<DepositRow>(
     `INSERT INTO deposit (user_id, project_id, amount)
-     VALUES ($1, $2, $3)
+     VALUES ($1, $2, ROUND($3::numeric, 3))
      RETURNING id, user_id, project_id, amount, created_at`,
-    [input.userId, input.projectId, input.amount],
+    [input.userId, input.projectId, amount],
   );
   return loadDepositById(rows[0]!.id);
 }

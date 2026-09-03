@@ -1,0 +1,4 @@
+DROP INDEX IF EXISTS project_eta_idx;
+
+ALTER TABLE project
+  DROP COLUMN IF EXISTS eta;

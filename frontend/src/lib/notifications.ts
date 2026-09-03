@@ -1,12 +1,20 @@
-import { getApiBase, getToken } from "@/lib/auth";
+import { fetchWithTimeout, getApiBase, getToken } from "@/lib/auth";
+
+const NOTIFICATIONS_TIMEOUT_MS = 8_000;
+
+export type NotificationKind = "bid" | "bid_test" | "event" | "birthday";
 
 export type BidNotification = {
   id: number;
-  bid_id: number;
+  kind: NotificationKind;
+  bid_id: number | null;
+  bid_test_id: number | null;
+  event_id: number | null;
   recipient_user_id: number;
   actor_user_id: number;
   actor_name: string;
   bid_url: string;
+  event_title: string;
   read_at: string | null;
   created_at: string;
 };
@@ -32,10 +40,22 @@ async function authFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
     headers.set("Content-Type", "application/json");
   }
 
-  const res = await fetch(`${getApiBase()}${path}`, {
-    ...init,
-    headers,
-  });
+  let res: Response;
+  try {
+    res = await fetchWithTimeout(
+      `${getApiBase()}${path}`,
+      {
+        ...init,
+        headers,
+      },
+      NOTIFICATIONS_TIMEOUT_MS,
+    );
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new Error("Request timed out");
+    }
+    throw err;
+  }
 
   const data = (await res.json()) as T | ErrorResponse;
 
@@ -58,12 +78,33 @@ export async function fetchUnreadBidNotifications(): Promise<NotificationsRespon
 }
 
 export async function markBidNotificationsRead(
-  notificationIds?: number[],
+  items?: Array<{ id: number; kind: NotificationKind }>,
 ): Promise<void> {
   await authFetch<{ ok: boolean }>("/api/notifications/read", {
     method: "POST",
-    body: JSON.stringify(
-      notificationIds ? { ids: notificationIds } : {},
-    ),
+    body: JSON.stringify(items ? { items } : {}),
   });
+}
+
+export function notificationKey(item: {
+  id: number;
+  kind: NotificationKind;
+}): string {
+  return `${item.kind}:${item.id}`;
+}
+
+export function alertPathForNotification(
+  item: BidNotification,
+  role: string,
+): string {
+  if (item.kind === "bid_test") {
+    return "/dashboard/test-bid";
+  }
+  if (item.kind === "event") {
+    return "/dashboard/event";
+  }
+  if (item.kind === "birthday") {
+    return "/dashboard/settings";
+  }
+  return role === "BigBoss" ? "/dashboard/team-bid" : "/dashboard/bid";
 }

@@ -1,0 +1,6 @@
+-- Personal profile fields for the Settings → Profile tab.
+ALTER TABLE users
+  ADD COLUMN IF NOT EXISTS phone TEXT NOT NULL DEFAULT '',
+  ADD COLUMN IF NOT EXISTS job_title TEXT NOT NULL DEFAULT '',
+  ADD COLUMN IF NOT EXISTS location TEXT NOT NULL DEFAULT '',
+  ADD COLUMN IF NOT EXISTS bio TEXT NOT NULL DEFAULT '';

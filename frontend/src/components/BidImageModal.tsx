@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type PointerEvent } from "react";
+import { createPortal } from "react-dom";
 import type { Bid } from "@/lib/bids";
 
 type BidImageModalProps = {
@@ -37,6 +38,11 @@ export function BidImageModal({
   const onCloseRef = useRef(onClose);
   const onShowProposalRef = useRef(onShowProposal);
   const setZoomRef = useRef(setZoom);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   useEffect(() => {
     onCloseRef.current = onClose;
@@ -141,14 +147,14 @@ export function BidImageModal({
     }
   }
 
-  if (!bid.image) return null;
+  if (!bid.image || !mounted) return null;
 
-  return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-2 sm:p-3">
+  return createPortal(
+    <div className="modal-backdrop-enter fixed inset-0 z-[200] flex items-center justify-center p-2 sm:p-3">
       <button
         type="button"
         aria-label="Close modal"
-        className="absolute inset-0 bg-slate-950/75"
+        className="absolute inset-0 bg-slate-950/70 backdrop-blur-[2px]"
         onClick={onClose}
       />
 
@@ -156,7 +162,7 @@ export function BidImageModal({
         role="dialog"
         aria-modal="true"
         aria-labelledby="bid-image-modal-title"
-        className="relative z-10 flex h-[min(96vh,72rem)] w-full max-w-[min(98vw,96rem)] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-slate-700 dark:bg-slate-900 dark:shadow-black/50"
+        className="modal-panel-enter relative z-10 flex h-[min(96vh,72rem)] w-full max-w-[min(88vw,80rem)] flex-col overflow-hidden rounded-2xl border border-slate-200/80 bg-white/95 shadow-[0_30px_80px_-20px_rgba(15,23,42,0.6)] backdrop-blur-xl dark:border-slate-700/80 dark:bg-slate-900/95 dark:shadow-black/50"
       >
         <div className="flex items-center justify-between gap-4 border-b border-slate-200 px-5 py-3 dark:border-slate-700">
           <div className="min-w-0">
@@ -210,6 +216,7 @@ export function BidImageModal({
           />
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

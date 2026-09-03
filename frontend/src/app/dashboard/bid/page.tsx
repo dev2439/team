@@ -1,15 +1,25 @@
 "use client";
 
 import type { FormEvent } from "react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BidDetailModal } from "@/components/BidDetailModal";
 import { BidImageModal } from "@/components/BidImageModal";
 import { ImagePasteArea } from "@/components/ImagePasteArea";
 import { LiveMarkdownEditor } from "@/components/LiveMarkdownEditor";
+import { MemberBidCounts } from "@/components/MemberBidCounts";
 import { fetchCurrentUser, type PublicUser } from "@/lib/auth";
-import { createBidRequest, fetchBids, type Bid } from "@/lib/bids";
+import { countsFromBids, countsFromSummary } from "@/lib/bid-day-counts";
+import {
+  createBidRequest,
+  fetchBidDays,
+  fetchBids,
+  type Bid,
+  type BidDay,
+} from "@/lib/bids";
+import { startBackgroundPoll } from "@/lib/poll";
 
-const SUB_TEAM_BIDS_POLL_MS = 4000;
+const SUB_TEAM_BIDS_POLL_MS = 10_000;
+const EST_TIMEZONE = "America/New_York";
 
 /** Example: https://www.upwork.com/jobs/~022088289986163309012 */
 const UPWORK_JOB_URL_PATTERN =
@@ -19,37 +29,72 @@ function isValidUpworkJobUrl(value: string): boolean {
   return UPWORK_JOB_URL_PATTERN.test(value.trim());
 }
 
-function dayKeyFromDate(date: Date): string {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
-
-function dayKeyFromCreatedAt(value: string): string {
-  return dayKeyFromDate(new Date(value));
+function pad2(value: number): string {
+  return String(value).padStart(2, "0");
 }
 
 function todayDayKey(): string {
-  return dayKeyFromDate(new Date());
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: EST_TIMEZONE,
+    year: "numeric",
+    month: "numeric",
+    day: "numeric",
+  }).formatToParts(new Date());
+  const num = (type: Intl.DateTimeFormatPartTypes) =>
+    Number(parts.find((part) => part.type === type)?.value);
+  return `${num("year")}-${pad2(num("month"))}-${pad2(num("day"))}`;
 }
 
 function formatDayLabel(dayKey: string): string {
   const [year, month, day] = dayKey.split("-").map(Number);
   if (!year || !month || !day) return dayKey;
-  return new Date(year, month - 1, day).toLocaleDateString(undefined, {
-    weekday: "short",
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  });
+  return new Date(Date.UTC(year, month - 1, day, 12, 0, 0)).toLocaleDateString(
+    "en-US",
+    {
+      timeZone: "UTC",
+      weekday: "short",
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+    },
+  );
+}
+
+function mergeDaysWithToday(days: BidDay[], today: string): BidDay[] {
+  if (days.some((day) => day.date === today)) return days;
+  return [{ date: today, count: 0 }, ...days].sort((a, b) =>
+    b.date.localeCompare(a.date),
+  );
+}
+
+function canViewBidProposal(user: PublicUser | null, bid: Bid): boolean {
+  if (!user) return false;
+  if (bid.user_id === user.id) return true;
+  return user.role === "SubBoss";
+}
+
+function expandedDayKeys(
+  days: BidDay[],
+  overrides: Record<string, boolean>,
+  today: string,
+): string[] {
+  return days
+    .map((day) => day.date)
+    .filter((dayKey) => {
+      if (Object.prototype.hasOwnProperty.call(overrides, dayKey)) {
+        return overrides[dayKey] === true;
+      }
+      return dayKey === today;
+    });
 }
 
 export default function BidPage() {
   const [url, setUrl] = useState("");
   const [proposal, setProposal] = useState("");
   const [image, setImage] = useState<string | null>(null);
-  const [bids, setBids] = useState<Bid[]>([]);
+  const [days, setDays] = useState<BidDay[]>([]);
+  const [bidsByDate, setBidsByDate] = useState<Record<string, Bid[]>>({});
+  const [dayLoading, setDayLoading] = useState<Record<string, boolean>>({});
   const [currentUser, setCurrentUser] = useState<PublicUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -67,77 +112,137 @@ export default function BidPage() {
     Record<string, boolean>
   >({});
 
+  const todayKey = useMemo(() => todayDayKey(), []);
+  const expandedKeysRef = useRef<string[]>([todayKey]);
+
   function isDayExpanded(dayKey: string): boolean {
     if (Object.prototype.hasOwnProperty.call(dayExpandedOverrides, dayKey)) {
       return dayExpandedOverrides[dayKey]!;
     }
-    return dayKey === todayDayKey();
+    return dayKey === todayKey;
   }
 
-  function toggleDayExpanded(dayKey: string) {
-    setDayExpandedOverrides((current) => ({
-      ...current,
-      [dayKey]: !isDayExpanded(dayKey),
-    }));
-  }
-
-  const loadBids = useCallback(async (options?: { silent?: boolean }) => {
+  const loadDays = useCallback(async (options?: { silent?: boolean }) => {
     const silent = options?.silent ?? false;
     try {
-      const rows = await fetchBids();
-      setBids(rows);
+      const rows = await fetchBidDays();
+      setDays(mergeDaysWithToday(rows, todayKey));
       if (!silent) setError(null);
     } catch (err) {
+      setDays((current) =>
+        current.length > 0 ? current : mergeDaysWithToday([], todayKey),
+      );
       if (!silent) {
         setError(err instanceof Error ? err.message : "Failed to load bids");
       }
-    } finally {
-      setLoading(false);
     }
-  }, []);
+  }, [todayKey]);
+
+  const loadDayBids = useCallback(
+    async (dayKey: string, options?: { silent?: boolean }) => {
+      const silent = options?.silent ?? false;
+      if (!silent) {
+        setDayLoading((current) => ({ ...current, [dayKey]: true }));
+      }
+      try {
+        const rows = await fetchBids({ date: dayKey });
+        setBidsByDate((current) => ({ ...current, [dayKey]: rows }));
+        if (!silent) setError(null);
+      } catch (err) {
+        if (!silent) {
+          setError(err instanceof Error ? err.message : "Failed to load bids");
+        }
+      } finally {
+        if (!silent) {
+          setDayLoading((current) => ({ ...current, [dayKey]: false }));
+        }
+      }
+    },
+    [],
+  );
+
+  function toggleDayExpanded(dayKey: string) {
+    const nextExpanded = !isDayExpanded(dayKey);
+    setDayExpandedOverrides((current) => ({
+      ...current,
+      [dayKey]: nextExpanded,
+    }));
+    if (nextExpanded) {
+      void loadDayBids(dayKey);
+    }
+  }
 
   useEffect(() => {
-    void loadBids();
+    expandedKeysRef.current = expandedDayKeys(
+      days,
+      dayExpandedOverrides,
+      todayKey,
+    );
+  }, [days, dayExpandedOverrides, todayKey]);
 
-    const timer = window.setInterval(() => {
-      void loadBids({ silent: true });
-    }, SUB_TEAM_BIDS_POLL_MS);
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      setLoading(true);
+      try {
+        await loadDays();
+        if (cancelled) return;
+        await loadDayBids(todayKey);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
 
-    const onFocus = () => {
-      void loadBids({ silent: true });
-    };
-    window.addEventListener("focus", onFocus);
-    document.addEventListener("visibilitychange", onFocus);
+    const stopPoll = startBackgroundPoll(
+      async () => {
+        await loadDays({ silent: true });
+        await Promise.all(
+          expandedKeysRef.current.map((dayKey) =>
+            loadDayBids(dayKey, { silent: true }),
+          ),
+        );
+      },
+      SUB_TEAM_BIDS_POLL_MS,
+      { runImmediately: false },
+    );
 
     return () => {
-      window.clearInterval(timer);
-      window.removeEventListener("focus", onFocus);
-      document.removeEventListener("visibilitychange", onFocus);
+      cancelled = true;
+      stopPoll();
     };
-  }, [loadBids]);
+  }, [loadDayBids, loadDays, todayKey]);
 
   useEffect(() => {
     void fetchCurrentUser().then(setCurrentUser);
   }, []);
 
-  const bidsByDay = useMemo(() => {
-    const groups = new Map<string, Bid[]>();
+  const bidGroups = useMemo(
+    () =>
+      days.map((day) => {
+        const bids = bidsByDate[day.date] ?? [];
+        const loaded = Object.prototype.hasOwnProperty.call(
+          bidsByDate,
+          day.date,
+        );
+        return {
+          dayKey: day.date,
+          label: formatDayLabel(day.date),
+          count: loaded ? bids.length : day.count,
+          memberCounts: loaded
+            ? countsFromBids(bids)
+            : countsFromSummary(day.members),
+          bids,
+          loaded,
+          loadingDay: dayLoading[day.date] === true,
+        };
+      }),
+    [bidsByDate, dayLoading, days],
+  );
 
-    for (const bid of bids) {
-      const dayKey = dayKeyFromCreatedAt(bid.created_at);
-      const current = groups.get(dayKey) ?? [];
-      current.push(bid);
-      groups.set(dayKey, current);
-    }
-
-    return [...groups.entries()]
-      .sort(([a], [b]) => b.localeCompare(a))
-      .map(([dayKey, dayBids]) => ({
-        dayKey,
-        label: formatDayLabel(dayKey),
-        bids: dayBids,
-      }));
-  }, [bids]);
+  const totalBidCount = useMemo(
+    () => bidGroups.reduce((sum, group) => sum + group.count, 0),
+    [bidGroups],
+  );
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -165,7 +270,16 @@ export default function BidPage() {
         proposal: proposal.trim(),
         image,
       });
-      setBids((current) => [bid, ...current]);
+      setBidsByDate((current) => ({
+        ...current,
+        [todayKey]: [bid, ...(current[todayKey] ?? [])],
+      }));
+      setDays((current) => {
+        const next = mergeDaysWithToday(current, todayKey);
+        return next.map((day) =>
+          day.date === todayKey ? { ...day, count: day.count + 1 } : day,
+        );
+      });
       setUrl("");
       setProposal("");
       setImage(null);
@@ -252,7 +366,7 @@ export default function BidPage() {
               Sub team bids
             </h2>
             <span className="text-sm text-slate-500">
-              {loading ? "Loading…" : `${bids.length} total`}
+              {loading ? "Loading…" : `${totalBidCount} total`}
             </span>
           </div>
 
@@ -263,15 +377,15 @@ export default function BidPage() {
               </p>
             )}
 
-            {!loading && bids.length === 0 && (
+            {!loading && bidGroups.length === 0 && (
               <p className="px-4 py-8 text-center text-sm text-slate-500">
                 No bids from your sub team yet.
               </p>
             )}
 
-            {!loading && bids.length > 0 && (
+            {!loading && bidGroups.length > 0 && (
               <div className="divide-y divide-slate-200">
-                {bidsByDay.map((group) => {
+                {bidGroups.map((group) => {
                   const expanded = isDayExpanded(group.dayKey);
 
                   return (
@@ -284,28 +398,45 @@ export default function BidPage() {
                           expanded ? "border-b border-slate-200" : ""
                         }`}
                       >
-                        <h3 className="text-sm font-semibold text-slate-900">
-                          {group.label}
-                        </h3>
-                        <span className="flex shrink-0 items-center gap-2 text-xs text-slate-500">
-                          {group.bids.length} bid
-                          {group.bids.length === 1 ? "" : "s"}
-                          <span
-                            aria-hidden
-                            className={`text-slate-500 transition-transform ${
-                              expanded ? "rotate-180" : ""
-                            }`}
-                          >
-                            ▾
-                          </span>
+                        <div className="min-w-0">
+                          <h3 className="text-sm font-semibold text-slate-900">
+                            {group.label}
+                          </h3>
+                          <p className="mt-0.5 text-xs text-slate-500">
+                            {group.count} bid
+                            {group.count === 1 ? "" : "s"}
+                          </p>
+                          {group.memberCounts.length > 0 ? (
+                            <div className="mt-2">
+                              <MemberBidCounts members={group.memberCounts} />
+                            </div>
+                          ) : null}
+                        </div>
+                        <span
+                          aria-hidden
+                          className={`shrink-0 text-slate-500 transition-transform ${
+                            expanded ? "rotate-180" : ""
+                          }`}
+                        >
+                          ▾
                         </span>
                       </button>
                       {expanded ? (
+                        group.loadingDay && !group.loaded ? (
+                          <p className="px-4 py-6 text-sm text-slate-500">
+                            Loading bids…
+                          </p>
+                        ) : group.bids.length === 0 ? (
+                          <p className="px-4 py-6 text-sm text-slate-500">
+                            No bids this day.
+                          </p>
+                        ) : (
                         <ul className="divide-y divide-slate-100">
                           {group.bids.map((bid, index) => {
-                            const isOwnBid =
-                              currentUser != null &&
-                              bid.user_id === currentUser.id;
+                            const showProposal = canViewBidProposal(
+                              currentUser,
+                              bid,
+                            );
 
                             return (
                               <li
@@ -342,7 +473,7 @@ export default function BidPage() {
                                       Job
                                     </button>
                                   ) : null}
-                                  {isOwnBid ? (
+                                  {showProposal ? (
                                     <button
                                       type="button"
                                       onClick={() =>
@@ -361,6 +492,7 @@ export default function BidPage() {
                             );
                           })}
                         </ul>
+                        )
                       ) : null}
                     </section>
                   );
@@ -392,7 +524,7 @@ export default function BidPage() {
           bid={jobBid.bid}
           onClose={() => setJobBid(null)}
           onShowProposal={
-            currentUser != null && jobBid.bid.user_id === currentUser.id
+            canViewBidProposal(currentUser, jobBid.bid)
               ? () => {
                   setSelectedBid(jobBid);
                   setJobBid(null);

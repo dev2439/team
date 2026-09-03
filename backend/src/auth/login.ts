@@ -8,6 +8,11 @@ export type PublicUser = {
   email: string;
   role: UserRole;
   balance: number;
+  phone: string;
+  job_title: string;
+  location: string;
+  bio: string;
+  birthday: string | null;
 };
 
 export type ListedUser = PublicUser & {
@@ -21,6 +26,11 @@ type UserRow = {
   password: string;
   role: UserRole;
   balance: number;
+  phone?: string | null;
+  job_title?: string | null;
+  location?: string | null;
+  bio?: string | null;
+  birthday?: Date | string | null;
 };
 
 type SubTeamRow = {
@@ -29,6 +39,11 @@ type SubTeamRow = {
   user_ids: number[] | null;
 };
 
+const PROFILE_SELECT = `
+  id, name, email, password, role, balance,
+  phone, job_title, location, bio, birthday::text AS birthday
+`;
+
 function toPublicUser(user: UserRow): PublicUser {
   return {
     id: user.id,
@@ -36,6 +51,16 @@ function toPublicUser(user: UserRow): PublicUser {
     email: user.email,
     role: user.role,
     balance: Number(user.balance) || 0,
+    phone: user.phone ?? "",
+    job_title: user.job_title ?? "",
+    location: user.location ?? "",
+    bio: user.bio ?? "",
+    birthday:
+      user.birthday == null
+        ? null
+        : user.birthday instanceof Date
+          ? user.birthday.toISOString().slice(0, 10)
+          : String(user.birthday).slice(0, 10),
   };
 }
 
@@ -46,7 +71,7 @@ export async function loginWithEmailPassword(
   const normalizedEmail = email.trim().toLowerCase();
 
   const { rows } = await query<UserRow>(
-    `SELECT id, name, email, password, role, balance
+    `SELECT ${PROFILE_SELECT}
      FROM users
      WHERE lower(email) = $1
      LIMIT 1`,
@@ -64,7 +89,7 @@ export async function loginWithEmailPassword(
 
 export async function getUserById(id: number): Promise<PublicUser | null> {
   const { rows } = await query<UserRow>(
-    `SELECT id, name, email, password, role, balance
+    `SELECT ${PROFILE_SELECT}
      FROM users
      WHERE id = $1
      LIMIT 1`,
@@ -99,7 +124,7 @@ export async function changePassword(input: {
   }
 
   const { rows } = await query<UserRow>(
-    `SELECT id, name, email, password, role, balance
+    `SELECT ${PROFILE_SELECT}
      FROM users
      WHERE id = $1
      LIMIT 1`,
@@ -206,6 +231,115 @@ export async function updateListedUser(input: {
 
   const users = await listUsers();
   return users.find((user) => user.id === input.userId) ?? null;
+}
+
+function assertLength(value: string, label: string, max: number): string {
+  if (value.length > max) {
+    throw new Error(`${label} must be at most ${max} characters`);
+  }
+  return value;
+}
+
+function parseBirthday(value: string | null | undefined): string | null {
+  if (value == null) return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    throw new Error("birthday must be YYYY-MM-DD");
+  }
+  const [yearRaw, monthRaw, dayRaw] = trimmed.split("-");
+  const year = Number(yearRaw);
+  const month = Number(monthRaw);
+  const day = Number(dayRaw);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (
+    date.getUTCFullYear() !== year ||
+    date.getUTCMonth() !== month - 1 ||
+    date.getUTCDate() !== day
+  ) {
+    throw new Error("birthday must be a valid date");
+  }
+  return trimmed;
+}
+
+export async function updateProfile(input: {
+  userId: number;
+  name: string;
+  email: string;
+  phone?: string;
+  jobTitle?: string;
+  location?: string;
+  bio?: string;
+  birthday?: string | null;
+}): Promise<PublicUser> {
+  const name = input.name.trim();
+  if (!name) {
+    throw new Error("name is required");
+  }
+  assertLength(name, "name", 100);
+
+  const email = input.email.trim().toLowerCase();
+  if (!email) {
+    throw new Error("email is required");
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    throw new Error("email must be a valid email address");
+  }
+  assertLength(email, "email", 200);
+
+  const existing = await getUserById(input.userId);
+  if (!existing) {
+    throw new Error("User not found");
+  }
+
+  const phone = assertLength(
+    (input.phone !== undefined ? input.phone : existing.phone).trim(),
+    "phone",
+    40,
+  );
+  const jobTitle = assertLength(
+    (input.jobTitle ?? "").trim(),
+    "job_title",
+    120,
+  );
+  const location = assertLength(
+    (input.location !== undefined ? input.location : existing.location).trim(),
+    "location",
+    120,
+  );
+  const bio = assertLength((input.bio ?? "").trim(), "bio", 2000);
+  const birthday = parseBirthday(input.birthday);
+
+  const { rows: taken } = await query<{ id: number }>(
+    `SELECT id FROM users
+     WHERE lower(email) = $1
+       AND id <> $2
+     LIMIT 1`,
+    [email, input.userId],
+  );
+  if (taken[0]) {
+    throw new Error("email is already in use");
+  }
+
+  const { rows } = await query<UserRow>(
+    `UPDATE users
+     SET
+       name = $2,
+       email = $3,
+       phone = $4,
+       job_title = $5,
+       location = $6,
+       bio = $7,
+       birthday = $8
+     WHERE id = $1
+     RETURNING ${PROFILE_SELECT}`,
+    [input.userId, name, email, phone, jobTitle, location, bio, birthday],
+  );
+  const row = rows[0];
+  if (!row) {
+    throw new Error("User not found");
+  }
+  return toPublicUser(row);
 }
 
 export type { User };

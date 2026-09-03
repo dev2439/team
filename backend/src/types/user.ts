@@ -9,6 +9,11 @@ export type User = {
   password: string;
   role: UserRole;
   balance: number;
+  phone: string;
+  job_title: string;
+  location: string;
+  bio: string;
+  birthday: string | null;
 };
 
 export function isUserRole(value: string): value is UserRole {

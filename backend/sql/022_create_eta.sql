@@ -1,0 +1,11 @@
+CREATE TABLE IF NOT EXISTS eta (
+  id SERIAL PRIMARY KEY,
+  project_id INTEGER NOT NULL REFERENCES project (id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+  amount DOUBLE PRECISION NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS eta_user_id_idx ON eta (user_id);
+CREATE INDEX IF NOT EXISTS eta_project_id_idx ON eta (project_id);
+CREATE INDEX IF NOT EXISTS eta_created_at_idx ON eta (created_at DESC);

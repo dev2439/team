@@ -90,18 +90,25 @@ export async function createDeposit(input: {
 export async function createBidDepositForUser(input: {
   user_id: number;
   amount: number;
+  /** Week start YYYY-MM-DD — BigBoss only, for non-current weeks. */
+  day?: string;
 }): Promise<Deposit> {
   const userId = Math.trunc(Number(input.user_id));
   if (!Number.isFinite(userId) || userId <= 0) {
     throw new Error("Invalid user_id");
   }
 
+  const body: { user_id: number; amount: number; day?: string } = {
+    user_id: userId,
+    amount: input.amount,
+  };
+  if (input.day) {
+    body.day = input.day;
+  }
+
   const data = await authFetch<{ deposit: Deposit }>("/api/deposits/bid", {
     method: "POST",
-    body: JSON.stringify({
-      user_id: userId,
-      amount: input.amount,
-    }),
+    body: JSON.stringify(body),
   });
 
   if (Number(data.deposit.user_id) !== userId) {

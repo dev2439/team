@@ -31,10 +31,15 @@ export function renderMarkdown(markdown: string): string {
   let inOl = false;
   let inCode = false;
   let codeBuffer: string[] = [];
+  /**
+   * Continues across interrupted ordered lists (e.g. `1. Q` + answer + `1. Q`)
+   * so markers stay 1, 2, 3… instead of resetting to 1 each time.
+   */
+  let nextOlNumber = 1;
   /** Soft-wrapped lines within the current paragraph (single Enter). */
   let paragraphLines: string[] = [];
-  /** Consecutive `>` quote lines, merged into one block. */
-  let quoteLines: string[] = [];
+  /** Consecutive quote lines with nesting depth from leading `>` markers. */
+  let quoteLines: { depth: number; text: string }[] = [];
   /** Next flushed paragraph should use a larger top gap (after blank Enter). */
   let pendingParagraphBreak = false;
 
@@ -64,14 +69,45 @@ export function renderMarkdown(markdown: string): string {
     pendingParagraphBreak = false;
   };
 
+  const quoteClass =
+    "my-0 border-l-4 border-slate-300 bg-slate-50 py-0 pl-4 pr-0 leading-7 text-slate-700";
+
   const flushQuote = () => {
     if (quoteLines.length === 0) return;
-    const body = quoteLines.map(inlineMarkdown).join("<br />");
-    const top = pendingParagraphBreak ? "mt-6" : "mt-3";
     pendingParagraphBreak = false;
-    html.push(
-      `<blockquote class="${top} mb-3 border-l-4 border-slate-300 bg-slate-50 px-4 py-2.5 leading-7 text-slate-700">${body}</blockquote>`,
-    );
+
+    const parts: string[] = [];
+    let currentDepth = 0;
+
+    for (let i = 0; i < quoteLines.length; i++) {
+      const { depth, text } = quoteLines[i]!;
+      const targetDepth = Math.max(1, depth);
+
+      while (currentDepth < targetDepth) {
+        parts.push(`<blockquote class="${quoteClass}">`);
+        currentDepth += 1;
+      }
+      while (currentDepth > targetDepth) {
+        parts.push("</blockquote>");
+        currentDepth -= 1;
+      }
+
+      parts.push(inlineMarkdown(text));
+      if (i < quoteLines.length - 1) {
+        const nextDepth = Math.max(1, quoteLines[i + 1]!.depth);
+        // Same nesting level continues on the next line inside this quote.
+        if (nextDepth === currentDepth) {
+          parts.push("<br />");
+        }
+      }
+    }
+
+    while (currentDepth > 0) {
+      parts.push("</blockquote>");
+      currentDepth -= 1;
+    }
+
+    html.push(parts.join(""));
     quoteLines = [];
   };
 
@@ -115,6 +151,7 @@ export function renderMarkdown(markdown: string): string {
       flushParagraph();
       flushQuote();
       closeLists();
+      nextOlNumber = 1;
       const level = heading[1].length;
       const sizes =
         level === 1
@@ -130,11 +167,19 @@ export function renderMarkdown(markdown: string): string {
       continue;
     }
 
-    const quote = /^>\s?(.*)$/.exec(line);
-    if (quote) {
+    // Count leading `>` markers: `> a`, `> > b`, `>>c` → depths 1, 2, 2.
+    if (/^>\s?/.test(line)) {
       flushParagraph();
       closeLists();
-      quoteLines.push(quote[1]);
+      let depth = 0;
+      let rest = line;
+      while (/^>\s?/.test(rest)) {
+        const next = /^>\s?(.*)$/.exec(rest);
+        if (!next) break;
+        depth += 1;
+        rest = next[1] ?? "";
+      }
+      quoteLines.push({ depth: Math.max(1, depth), text: rest });
       continue;
     }
 
@@ -165,16 +210,18 @@ export function renderMarkdown(markdown: string): string {
       if (inUl) {
         html.push("</ul>");
         inUl = false;
+        nextOlNumber = 1;
       }
       if (!inOl) {
         const top = pendingParagraphBreak ? "mt-6" : "mt-3";
         pendingParagraphBreak = false;
         html.push(
-          `<ol class="${top} mb-3 list-decimal space-y-1.5 pl-5 text-slate-700">`,
+          `<ol start="${nextOlNumber}" class="${top} mb-3 list-decimal space-y-1.5 pl-5 text-slate-700">`,
         );
         inOl = true;
       }
       html.push(`<li class="leading-7">${inlineMarkdown(ol[1])}</li>`);
+      nextOlNumber += 1;
       continue;
     }
 

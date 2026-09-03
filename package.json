@@ -10,8 +10,18 @@
     "db:check": "npm --prefix backend run db:check",
     "build": "npm --prefix frontend run build",
     "start:frontend": "npm --prefix frontend run start",
+    "start:frontend:https": "npm --prefix frontend run start:https",
     "start:backend": "npm --prefix backend run start",
-    "lint": "npm --prefix frontend run lint"
+    "lint": "npm --prefix frontend run lint",
+    "pm2:start": "pm2 start ecosystem.config.cjs",
+    "pm2:stop": "pm2 stop ecosystem.config.cjs",
+    "pm2:restart": "pm2 restart ecosystem.config.cjs",
+    "pm2:delete": "pm2 delete ecosystem.config.cjs",
+    "pm2:logs": "pm2 logs",
+    "pm2:status": "pm2 status"
+  },
+  "devDependencies": {
+    "pm2": "^6.0.8"
   },
   "engines": {
     "node": ">=22"

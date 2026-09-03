@@ -12,7 +12,7 @@ export function ThemeToggle({ className = "" }: { className?: string }) {
       onClick={toggleTheme}
       aria-label={isDark ? "Switch to light theme" : "Switch to dark theme"}
       title={isDark ? "Light theme" : "Dark theme"}
-      className={`inline-flex h-9 items-center gap-2 rounded-lg border px-2.5 text-xs font-medium transition ${className}`}
+      className={`theme-toggle inline-flex h-9 items-center gap-2 rounded-lg border px-2.5 text-xs font-medium shadow-sm backdrop-blur transition ${className}`}
     >
       {isDark ? (
         <>

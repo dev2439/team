@@ -4,6 +4,11 @@ export type PublicUser = {
   email: string;
   role: "Member" | "SubBoss" | "BigBoss" | "Tester";
   balance?: number;
+  phone?: string;
+  job_title?: string;
+  location?: string;
+  bio?: string;
+  birthday?: string | null;
 };
 
 export type LoginResponse = {
@@ -47,7 +52,7 @@ export function clearToken() {
   localStorage.removeItem(TOKEN_KEY);
 }
 
-async function fetchWithTimeout(
+export async function fetchWithTimeout(
   input: string,
   init: RequestInit = {},
   timeoutMs = AUTH_TIMEOUT_MS,
@@ -55,10 +60,22 @@ async function fetchWithTimeout(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
+  // Prefer the caller's signal when present; still abort on timeout.
+  const upstream = init.signal;
+  const onUpstreamAbort = () => controller.abort();
+  if (upstream) {
+    if (upstream.aborted) {
+      controller.abort();
+    } else {
+      upstream.addEventListener("abort", onUpstreamAbort, { once: true });
+    }
+  }
+
   try {
     return await fetch(input, { ...init, signal: controller.signal });
   } finally {
     clearTimeout(timer);
+    upstream?.removeEventListener("abort", onUpstreamAbort);
   }
 }
 
@@ -142,6 +159,52 @@ export async function changePasswordRequest(input: {
         : "Failed to change password",
     );
   }
+}
+
+export async function updateProfileRequest(input: {
+  name: string;
+  email: string;
+  phone?: string;
+  jobTitle?: string;
+  location?: string;
+  bio?: string;
+  birthday?: string | null;
+}): Promise<PublicUser> {
+  const token = getToken();
+  if (!token) {
+    throw new Error("Not signed in");
+  }
+
+  const res = await fetchWithTimeout(`${getApiBase()}/api/auth/profile`, {
+    method: "PUT",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      name: input.name,
+      email: input.email,
+      job_title: input.jobTitle ?? "",
+      bio: input.bio ?? "",
+      birthday: input.birthday ?? null,
+    }),
+  });
+
+  const data = (await res.json()) as MeResponse | AuthError;
+
+  if (!res.ok) {
+    throw new Error(
+      "error" in data && typeof data.error === "string"
+        ? data.error
+        : "Failed to update profile",
+    );
+  }
+
+  if (!("user" in data)) {
+    throw new Error("Unexpected profile response");
+  }
+
+  return data.user;
 }
 
 export function logout() {

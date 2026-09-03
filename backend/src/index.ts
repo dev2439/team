@@ -11,16 +11,38 @@ import {
   listUsers,
   loginWithEmailPassword,
   updateListedUser,
+  updateProfile,
 } from "./auth/login.ts";
 import { getAuthPayload } from "./auth/middleware.ts";
 import { isUserRole } from "./types/user.ts";
-import { createBid, listBidsForSubTeam, listTeamBids } from "./bids.ts";
+import {
+  assertBidDateKey,
+  bidsVisibleToViewer,
+  createBid,
+  listBidDaysForSubTeam,
+  listBidsForSubTeam,
+  listTeamBidDays,
+  listTeamBids,
+} from "./bids.ts";
+import {
+  createFreelancerBid,
+  listFreelancerBidDaysForSubTeam,
+  listFreelancerBidsForSubTeam,
+  listTeamFreelancerBidDays,
+  listTeamFreelancerBids,
+} from "./freelancer-bids.ts";
 import {
   createTestBid,
   createTestBidProposal,
   getProposalForParentAndUser,
   listTestBidProposals,
   listTestBids,
+  listRatingsForProposal,
+  listTestBidViewers,
+  recordTestBidView,
+  setTestBidResultsVisible,
+  toggleTestBidFavorite,
+  upsertTestBidRating,
 } from "./test-bids.ts";
 import { checkDatabase, closePool } from "./db.ts";
 import { readJsonBody } from "./http.ts";
@@ -34,6 +56,14 @@ import {
 import { listSubTeamsWithMembers } from "./sub-teams.ts";
 import { getTarget, upsertTarget } from "./targets.ts";
 import {
+  createPlanItem,
+  deletePlanItem,
+  listPlanItemsForMonth,
+  listPlanItemsInRange,
+  updatePlanItem,
+} from "./plans.ts";
+import type { PlanItemScope, PlanItemStatus } from "./types/plan.ts";
+import {
   isFinancialType,
   listFinancialInRange,
   upsertFinancial,
@@ -42,9 +72,25 @@ import { createDeposit, listDeposits, projectOwnedByUser as depositProjectOwnedB
 import { createProject, deleteProjectForUser, listProjects, listProjectsForUser } from "./projects.ts";
 import { upsertEta, listEtas, projectOwnedByUser } from "./etas.ts";
 import {
+  createBidTestNotifications,
   listUnreadBidNotifications,
   markBidNotificationsRead,
+  type NotificationReadItem,
 } from "./notifications.ts";
+import type { NotificationKind } from "./types/notification.ts";
+import {
+  createEvent,
+  deleteEvent,
+  getEventById,
+  listEventsInRange,
+  notifyDueEvents,
+  updateEvent,
+} from "./events.ts";
+import { notifyDueBirthdays } from "./birthdays.ts";
+import {
+  DOCX_MIME,
+  generateProfileDocx,
+} from "./profile-generator.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -72,7 +118,7 @@ const PORT = Number(process.env.PORT) || 4000;
 function corsHeaders() {
   return {
     "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET,POST,PUT,OPTIONS",
+    "Access-Control-Allow-Methods": "GET,POST,PUT,DELETE,OPTIONS",
     "Access-Control-Allow-Headers":
       "Content-Type, Authorization, authorization, content-type",
     "Access-Control-Max-Age": "86400",
@@ -85,6 +131,9 @@ function sendJson(
   status: number,
   body: unknown,
 ) {
+  if (res.headersSent || res.writableEnded) {
+    return;
+  }
   const payload = JSON.stringify(body);
   res.writeHead(status, {
     "Content-Type": "application/json",
@@ -94,7 +143,32 @@ function sendJson(
   res.end(payload);
 }
 
+function sendBinary(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  status: number,
+  body: Buffer,
+  headers: Record<string, string>,
+) {
+  if (res.headersSent || res.writableEnded) {
+    return;
+  }
+  res.writeHead(status, {
+    ...headers,
+    "Content-Length": body.length,
+    ...corsHeaders(),
+  });
+  res.end(body);
+}
+
 const server = createServer(async (req, res) => {
+  req.on("error", () => {
+    // Client aborted or reset the socket — ignore to avoid crashing the process.
+  });
+  res.on("error", () => {
+    // Response stream errors (e.g. ECONNRESET from proxy) — ignore.
+  });
+
   if (!req.url || !req.method) {
     sendJson(req, res, 400, { error: "Bad request" });
     return;
@@ -174,6 +248,52 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === "PUT" && url.pathname === "/api/auth/profile") {
+      const payload = getAuthPayload(req);
+      if (!payload) {
+        sendJson(req, res, 401, { error: "Unauthorized" });
+        return;
+      }
+
+      let body: Record<string, unknown> | null;
+      try {
+        body = await readJsonBody(req);
+      } catch {
+        sendJson(req, res, 400, { error: "Invalid JSON body" });
+        return;
+      }
+
+      try {
+        const user = await updateProfile({
+          userId: payload.sub,
+          name: String(body?.name ?? ""),
+          email: String(body?.email ?? ""),
+          phone: body?.phone === undefined ? undefined : String(body.phone),
+          jobTitle:
+            body?.job_title === undefined ? "" : String(body.job_title),
+          location:
+            body?.location === undefined ? undefined : String(body.location),
+          bio: body?.bio === undefined ? "" : String(body.bio),
+          birthday:
+            body?.birthday === undefined || body?.birthday === null
+              ? null
+              : String(body.birthday),
+        });
+        try {
+          await notifyDueBirthdays();
+        } catch (err) {
+          console.error("Failed to notify due birthdays:", err);
+        }
+        sendJson(req, res, 200, { user });
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : "Failed to update profile";
+        const status = message.includes("not found") ? 404 : 400;
+        sendJson(req, res, status, { error: message });
+      }
+      return;
+    }
+
     if (req.method === "POST" && url.pathname === "/api/auth/change-password") {
       const payload = getAuthPayload(req);
       if (!payload) {
@@ -211,6 +331,18 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === "GET" && url.pathname === "/api/bids/days") {
+      const payload = getAuthPayload(req);
+      if (!payload) {
+        sendJson(req, res, 401, { error: "Unauthorized" });
+        return;
+      }
+
+      const days = await listBidDaysForSubTeam(payload.sub);
+      sendJson(req, res, 200, { days });
+      return;
+    }
+
     if (req.method === "GET" && url.pathname === "/api/bids") {
       const payload = getAuthPayload(req);
       if (!payload) {
@@ -218,8 +350,31 @@ const server = createServer(async (req, res) => {
         return;
       }
 
-      const bids = await listBidsForSubTeam(payload.sub);
-      sendJson(req, res, 200, { bids });
+      const dateRaw = String(url.searchParams.get("date") ?? "").trim();
+      try {
+        const date = assertBidDateKey(dateRaw);
+        const bids = bidsVisibleToViewer(
+          await listBidsForSubTeam(payload.sub, date),
+          { userId: payload.sub, role: payload.role },
+        );
+        sendJson(req, res, 200, { bids });
+      } catch (err) {
+        sendJson(req, res, 400, {
+          error: err instanceof Error ? err.message : "date must be YYYY-MM-DD",
+        });
+      }
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/team-bids/days") {
+      const payload = getAuthPayload(req);
+      if (!payload) {
+        sendJson(req, res, 401, { error: "Unauthorized" });
+        return;
+      }
+
+      const days = await listTeamBidDays();
+      sendJson(req, res, 200, { days });
       return;
     }
 
@@ -230,7 +385,69 @@ const server = createServer(async (req, res) => {
         return;
       }
 
+      const dateRaw = String(url.searchParams.get("date") ?? "").trim();
+      if (dateRaw) {
+        try {
+          const date = assertBidDateKey(dateRaw);
+          const bids = await listTeamBids(date);
+          sendJson(req, res, 200, { bids });
+        } catch (err) {
+          sendJson(req, res, 400, {
+            error:
+              err instanceof Error ? err.message : "date must be YYYY-MM-DD",
+          });
+        }
+        return;
+      }
+
       const bids = await listTeamBids();
+      sendJson(req, res, 200, { bids });
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/team-freelancer-bids/days") {
+      const payload = getAuthPayload(req);
+      if (!payload) {
+        sendJson(req, res, 401, { error: "Unauthorized" });
+        return;
+      }
+      if (payload.role !== "BigBoss") {
+        sendJson(req, res, 403, { error: "Forbidden" });
+        return;
+      }
+
+      const days = await listTeamFreelancerBidDays();
+      sendJson(req, res, 200, { days });
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/team-freelancer-bids") {
+      const payload = getAuthPayload(req);
+      if (!payload) {
+        sendJson(req, res, 401, { error: "Unauthorized" });
+        return;
+      }
+      if (payload.role !== "BigBoss") {
+        sendJson(req, res, 403, { error: "Forbidden" });
+        return;
+      }
+
+      const dateRaw = String(url.searchParams.get("date") ?? "").trim();
+      if (dateRaw) {
+        try {
+          const date = assertBidDateKey(dateRaw);
+          const bids = await listTeamFreelancerBids(date);
+          sendJson(req, res, 200, { bids });
+        } catch (err) {
+          sendJson(req, res, 400, {
+            error:
+              err instanceof Error ? err.message : "date must be YYYY-MM-DD",
+          });
+        }
+        return;
+      }
+
+      const bids = await listTeamFreelancerBids();
       sendJson(req, res, 200, { bids });
       return;
     }
@@ -297,6 +514,93 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === "GET" && url.pathname === "/api/freelancer-bids/days") {
+      const payload = getAuthPayload(req);
+      if (!payload) {
+        sendJson(req, res, 401, { error: "Unauthorized" });
+        return;
+      }
+
+      const days = await listFreelancerBidDaysForSubTeam(payload.sub);
+      sendJson(req, res, 200, { days });
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/freelancer-bids") {
+      const payload = getAuthPayload(req);
+      if (!payload) {
+        sendJson(req, res, 401, { error: "Unauthorized" });
+        return;
+      }
+
+      const dateRaw = String(url.searchParams.get("date") ?? "").trim();
+      try {
+        const date = assertBidDateKey(dateRaw);
+        const bids = bidsVisibleToViewer(
+          await listFreelancerBidsForSubTeam(payload.sub, date),
+          { userId: payload.sub, role: payload.role },
+        );
+        sendJson(req, res, 200, { bids });
+      } catch (err) {
+        sendJson(req, res, 400, {
+          error: err instanceof Error ? err.message : "date must be YYYY-MM-DD",
+        });
+      }
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/freelancer-bids") {
+      const payload = getAuthPayload(req);
+      if (!payload) {
+        sendJson(req, res, 401, { error: "Unauthorized" });
+        return;
+      }
+
+      let body: Record<string, unknown> | null;
+      try {
+        body = await readJsonBody(req);
+      } catch {
+        sendJson(req, res, 400, { error: "Invalid JSON body" });
+        return;
+      }
+
+      const bidUrlRaw = typeof body?.url === "string" ? body.url.trim() : "";
+      const proposal =
+        typeof body?.proposal === "string" ? body.proposal.trim() : "";
+      const imageRaw =
+        typeof body?.image === "string" ? body.image.trim() : "";
+      const image = imageRaw || null;
+
+      if (!bidUrlRaw || !proposal) {
+        sendJson(req, res, 400, { error: "URL and proposal are required" });
+        return;
+      }
+
+      if (!image) {
+        sendJson(req, res, 400, { error: "Image is required" });
+        return;
+      }
+
+      if (
+        !image.startsWith("data:image/") ||
+        image.length > 3_500_000
+      ) {
+        sendJson(req, res, 400, {
+          error: "image must be a data URL under ~2.5MB",
+        });
+        return;
+      }
+
+      const bid = await createFreelancerBid({
+        userId: payload.sub,
+        url: bidUrlRaw,
+        proposal,
+        image,
+      });
+      sendJson(req, res, 201, { bid });
+      return;
+    }
+
     if (req.method === "GET" && url.pathname === "/api/test-bids") {
       const payload = getAuthPayload(req);
       if (!payload) {
@@ -316,16 +620,221 @@ const server = createServer(async (req, res) => {
         return;
       }
 
-      // All users' proposals for Test Result.
-      const proposals = await listTestBidProposals();
-      sendJson(req, res, 200, { proposals });
+      // BigBoss sees all proposals; others only published parents (+ their own).
+      const proposals = await listTestBidProposals(payload.sub, {
+        includeHiddenResults: payload.role === "BigBoss",
+      });
+      sendJson(req, res, 200, {
+        proposals,
+      });
       return;
+    }
+
+    {
+      const resultsVisibleMatch =
+        /^\/api\/test-bids\/(\d+)\/results-visible$/.exec(url.pathname);
+      if (resultsVisibleMatch && req.method === "POST") {
+        const payload = getAuthPayload(req);
+        if (!payload) {
+          sendJson(req, res, 401, { error: "Unauthorized" });
+          return;
+        }
+        if (payload.role !== "BigBoss") {
+          sendJson(req, res, 403, {
+            error: "Only BigBoss can publish test results",
+          });
+          return;
+        }
+
+        const testBidId = Number(resultsVisibleMatch[1]);
+        if (!Number.isFinite(testBidId) || testBidId <= 0) {
+          sendJson(req, res, 400, { error: "Invalid test bid id" });
+          return;
+        }
+
+        let body: Record<string, unknown> | null;
+        try {
+          body = await readJsonBody(req);
+        } catch {
+          sendJson(req, res, 400, { error: "Invalid JSON body" });
+          return;
+        }
+
+        const resultsVisible = Boolean(body?.results_visible);
+        try {
+          const testBid = await setTestBidResultsVisible({
+            id: testBidId,
+            resultsVisible,
+          });
+          sendJson(req, res, 200, { test_bid: testBid });
+        } catch (err) {
+          const message =
+            err instanceof Error ? err.message : "Failed to update visibility";
+          sendJson(
+            req,
+            res,
+            message.includes("not found") ? 404 : 400,
+            { error: message },
+          );
+        }
+        return;
+      }
+    }
+
+    {
+      const favoriteMatch = /^\/api\/test-bid-proposals\/(\d+)\/favorite$/.exec(
+        url.pathname,
+      );
+      if (favoriteMatch && req.method === "POST") {
+        const payload = getAuthPayload(req);
+        if (!payload) {
+          sendJson(req, res, 401, { error: "Unauthorized" });
+          return;
+        }
+
+        const testBidId = Number(favoriteMatch[1]);
+        if (!Number.isFinite(testBidId) || testBidId <= 0) {
+          sendJson(req, res, 400, { error: "Invalid proposal id" });
+          return;
+        }
+
+        try {
+          const result = await toggleTestBidFavorite({
+            userId: payload.sub,
+            testBidId,
+          });
+          sendJson(req, res, 200, result);
+        } catch (err) {
+          const message =
+            err instanceof Error ? err.message : "Failed to update favorite";
+          const status = message.includes("not found") ? 404 : 400;
+          sendJson(req, res, status, { error: message });
+        }
+        return;
+      }
+    }
+
+    {
+      const viewersMatch = /^\/api\/test-bid-proposals\/(\d+)\/viewers$/.exec(
+        url.pathname,
+      );
+      if (viewersMatch && req.method === "GET") {
+        const payload = getAuthPayload(req);
+        if (!payload) {
+          sendJson(req, res, 401, { error: "Unauthorized" });
+          return;
+        }
+
+        const testBidId = Number(viewersMatch[1]);
+        if (!Number.isFinite(testBidId) || testBidId <= 0) {
+          sendJson(req, res, 400, { error: "Invalid proposal id" });
+          return;
+        }
+
+        const viewers = await listTestBidViewers(testBidId);
+        sendJson(req, res, 200, { viewers });
+        return;
+      }
+    }
+
+    {
+      const viewMatch = /^\/api\/test-bid-proposals\/(\d+)\/view$/.exec(
+        url.pathname,
+      );
+      if (viewMatch && req.method === "POST") {
+        const payload = getAuthPayload(req);
+        if (!payload) {
+          sendJson(req, res, 401, { error: "Unauthorized" });
+          return;
+        }
+
+        const testBidId = Number(viewMatch[1]);
+        if (!Number.isFinite(testBidId) || testBidId <= 0) {
+          sendJson(req, res, 400, { error: "Invalid proposal id" });
+          return;
+        }
+
+        try {
+          const result = await recordTestBidView({
+            userId: payload.sub,
+            testBidId,
+          });
+          sendJson(req, res, 200, result);
+        } catch (err) {
+          const message =
+            err instanceof Error ? err.message : "Failed to record view";
+          const status = message.includes("not found") ? 404 : 400;
+          sendJson(req, res, status, { error: message });
+        }
+        return;
+      }
+    }
+
+    {
+      const ratingMatch = /^\/api\/test-bid-proposals\/(\d+)\/rating$/.exec(
+        url.pathname,
+      );
+      if (ratingMatch) {
+        const payload = getAuthPayload(req);
+        if (!payload) {
+          sendJson(req, res, 401, { error: "Unauthorized" });
+          return;
+        }
+
+        const testBidId = Number(ratingMatch[1]);
+        if (!Number.isFinite(testBidId) || testBidId <= 0) {
+          sendJson(req, res, 400, { error: "Invalid proposal id" });
+          return;
+        }
+
+        if (req.method === "GET") {
+          const ratings = await listRatingsForProposal(testBidId);
+          sendJson(req, res, 200, { ratings });
+          return;
+        }
+
+        if (req.method === "POST") {
+          let body: Record<string, unknown> | null;
+          try {
+            body = await readJsonBody(req);
+          } catch {
+            sendJson(req, res, 400, { error: "Invalid JSON body" });
+            return;
+          }
+
+          const rating = Number(body?.rating);
+          const comment =
+            typeof body?.comment === "string" ? body.comment : "";
+
+          try {
+            const row = await upsertTestBidRating({
+              userId: payload.sub,
+              testBidId,
+              rating,
+              comment,
+            });
+            sendJson(req, res, 200, { rating: row });
+          } catch (err) {
+            const message =
+              err instanceof Error ? err.message : "Failed to save rating";
+            const status = message.includes("not found") ? 404 : 400;
+            sendJson(req, res, status, { error: message });
+          }
+          return;
+        }
+      }
     }
 
     if (req.method === "POST" && url.pathname === "/api/test-bids") {
       const payload = getAuthPayload(req);
       if (!payload) {
         sendJson(req, res, 401, { error: "Unauthorized" });
+        return;
+      }
+      if (payload.role !== "BigBoss") {
+        sendJson(req, res, 403, {
+          error: "Only BigBoss can create bid tests",
+        });
         return;
       }
 
@@ -376,6 +885,11 @@ const server = createServer(async (req, res) => {
         const testBid = await createTestBid({
           url: bidUrlRaw,
           image,
+          userId: payload.sub,
+        });
+        await createBidTestNotifications({
+          bidTestId: testBid.id,
+          actorUserId: payload.sub,
         });
         sendJson(req, res, 201, { test_bid: testBid });
       } catch (err) {
@@ -413,6 +927,17 @@ const server = createServer(async (req, res) => {
         }
 
         if (req.method === "POST") {
+          if (
+            payload.role !== "Member" &&
+            payload.role !== "SubBoss" &&
+            payload.role !== "Tester"
+          ) {
+            sendJson(req, res, 403, {
+              error: "Only Member, SubBoss, and Tester can submit test bids",
+            });
+            return;
+          }
+
           let body: Record<string, unknown> | null;
           try {
             body = await readJsonBody(req);
@@ -453,6 +978,13 @@ const server = createServer(async (req, res) => {
         return;
       }
 
+      try {
+        await notifyDueEvents();
+        await notifyDueBirthdays();
+      } catch (err) {
+        console.error("Failed to notify due events:", err);
+      }
+
       const notifications = await listUnreadBidNotifications(payload.sub);
       const recipientUserIds = [
         ...new Set(notifications.map((item) => item.recipient_user_id)),
@@ -479,20 +1011,200 @@ const server = createServer(async (req, res) => {
         return;
       }
 
-      const idsRaw = body?.ids;
-      const ids = Array.isArray(idsRaw)
-        ? idsRaw
+      const itemsRaw = body?.items;
+      let items: NotificationReadItem[] | undefined;
+
+      if (Array.isArray(itemsRaw)) {
+        items = itemsRaw
+          .map((value) => {
+            if (!value || typeof value !== "object") return null;
+            const record = value as Record<string, unknown>;
+            const id = Number(record.id);
+            const kind = record.kind;
+            if (
+              !Number.isFinite(id) ||
+              id <= 0 ||
+              (kind !== "bid" &&
+                kind !== "bid_test" &&
+                kind !== "event" &&
+                kind !== "birthday")
+            ) {
+              return null;
+            }
+            return {
+              id: Math.trunc(id),
+              kind: kind as NotificationKind,
+            };
+          })
+          .filter((value): value is NotificationReadItem => value != null);
+      } else {
+        // Backward compatible: { ids: number[] } means bid notifications.
+        const idsRaw = body?.ids;
+        if (Array.isArray(idsRaw)) {
+          items = idsRaw
             .map((value) => Number(value))
             .filter((value) => Number.isFinite(value) && value > 0)
-            .map((value) => Math.trunc(value))
-        : undefined;
+            .map((value) => ({
+              id: Math.trunc(value),
+              kind: "bid" as const,
+            }));
+        }
+      }
 
       const updated = await markBidNotificationsRead(
         payload.sub,
-        ids && ids.length > 0 ? ids : undefined,
+        items && items.length > 0 ? items : undefined,
       );
       sendJson(req, res, 200, { ok: true, updated });
       return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/events") {
+      const payload = getAuthPayload(req);
+      if (!payload) {
+        sendJson(req, res, 401, { error: "Unauthorized" });
+        return;
+      }
+
+      const from = String(url.searchParams.get("from") ?? "").trim();
+      const to = String(url.searchParams.get("to") ?? "").trim();
+      try {
+        const events = await listEventsInRange({ from, to });
+        sendJson(req, res, 200, { events });
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : "Failed to load events";
+        sendJson(req, res, 400, { error: message });
+      }
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/events") {
+      const payload = getAuthPayload(req);
+      if (!payload) {
+        sendJson(req, res, 401, { error: "Unauthorized" });
+        return;
+      }
+
+      let body: Record<string, unknown> | null;
+      try {
+        body = await readJsonBody(req);
+      } catch {
+        sendJson(req, res, 400, { error: "Invalid JSON body" });
+        return;
+      }
+
+      try {
+        const event = await createEvent({
+          userId: payload.sub,
+          title: String(body?.title ?? ""),
+          note: body?.note === undefined ? "" : String(body.note),
+          startsAt: String(body?.starts_at ?? ""),
+          endsAt: String(body?.ends_at ?? ""),
+        });
+        try {
+          await notifyDueEvents();
+        } catch (err) {
+          console.error("Failed to notify due events:", err);
+        }
+        sendJson(req, res, 201, { event });
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : "Failed to create event";
+        sendJson(req, res, 400, { error: message });
+      }
+      return;
+    }
+
+    {
+      const eventMatch = /^\/api\/events\/(\d+)$/.exec(url.pathname);
+      if (eventMatch) {
+        const payload = getAuthPayload(req);
+        if (!payload) {
+          sendJson(req, res, 401, { error: "Unauthorized" });
+          return;
+        }
+
+        const eventId = Number(eventMatch[1]);
+        if (!Number.isFinite(eventId) || eventId <= 0) {
+          sendJson(req, res, 400, { error: "Invalid event id" });
+          return;
+        }
+
+        const existing = await getEventById(eventId);
+        if (!existing) {
+          sendJson(req, res, 404, { error: "Event not found" });
+          return;
+        }
+
+        const canManage =
+          existing.user_id === payload.sub || payload.role === "BigBoss";
+        if (!canManage) {
+          sendJson(req, res, 403, {
+            error: "You can only change your own events",
+          });
+          return;
+        }
+
+        if (req.method === "PUT") {
+          let body: Record<string, unknown> | null;
+          try {
+            body = await readJsonBody(req);
+          } catch {
+            sendJson(req, res, 400, { error: "Invalid JSON body" });
+            return;
+          }
+
+          try {
+            const event = await updateEvent({
+              id: eventId,
+              title: body?.title === undefined ? undefined : String(body.title),
+              note: body?.note === undefined ? undefined : String(body.note),
+              startsAt:
+                body?.starts_at === undefined
+                  ? undefined
+                  : String(body.starts_at),
+              endsAt:
+                body?.ends_at === undefined
+                  ? undefined
+                  : String(body.ends_at),
+            });
+            try {
+              await notifyDueEvents();
+            } catch (err) {
+              console.error("Failed to notify due events:", err);
+            }
+            sendJson(req, res, 200, { event });
+          } catch (err) {
+            const message =
+              err instanceof Error ? err.message : "Failed to update event";
+            sendJson(
+              req,
+              res,
+              message.includes("not found") ? 404 : 400,
+              { error: message },
+            );
+          }
+          return;
+        }
+
+        if (req.method === "DELETE") {
+          try {
+            await deleteEvent(eventId);
+            sendJson(req, res, 200, { ok: true });
+          } catch (err) {
+            const message =
+              err instanceof Error ? err.message : "Failed to delete event";
+            sendJson(
+              req,
+              res,
+              message.includes("not found") ? 404 : 400,
+              { error: message },
+            );
+          }
+          return;
+        }
+      }
     }
 
     if (req.method === "GET" && url.pathname === "/api/reports/week") {
@@ -649,6 +1361,201 @@ const server = createServer(async (req, res) => {
       const target = await getTarget();
       sendJson(req, res, 200, { target });
       return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/plans") {
+      const payload = getAuthPayload(req);
+      if (!payload) {
+        sendJson(req, res, 401, { error: "Unauthorized" });
+        return;
+      }
+      if (
+        payload.role !== "Member" &&
+        payload.role !== "SubBoss" &&
+        payload.role !== "BigBoss" &&
+        payload.role !== "Tester"
+      ) {
+        sendJson(req, res, 403, { error: "Forbidden" });
+        return;
+      }
+
+      const from = String(url.searchParams.get("from") ?? "").trim();
+      const to = String(url.searchParams.get("to") ?? "").trim();
+      const month = String(url.searchParams.get("month") ?? "").trim();
+      const requestedUserId = Number(url.searchParams.get("user_id"));
+      const canViewOthers =
+        payload.role === "BigBoss" || payload.role === "Tester";
+      const userId =
+        canViewOthers &&
+        Number.isFinite(requestedUserId) &&
+        requestedUserId > 0
+          ? requestedUserId
+          : payload.sub;
+
+      try {
+        const plans =
+          from && to
+            ? await listPlanItemsInRange({ from, to, userId })
+            : month
+              ? await listPlanItemsForMonth(month, userId)
+              : null;
+        if (plans == null) {
+          sendJson(req, res, 400, {
+            error: "Provide from & to (YYYY-MM-DD) or month (YYYY-MM)",
+          });
+          return;
+        }
+        sendJson(req, res, 200, { plans });
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : "Failed to load plans";
+        sendJson(req, res, 400, { error: message });
+      }
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/plans") {
+      const payload = getAuthPayload(req);
+      if (!payload) {
+        sendJson(req, res, 401, { error: "Unauthorized" });
+        return;
+      }
+      if (payload.role !== "Member" && payload.role !== "SubBoss") {
+        sendJson(req, res, 403, {
+          error: "Only members can create plans",
+        });
+        return;
+      }
+
+      let body: Record<string, unknown> | null;
+      try {
+        body = await readJsonBody(req);
+      } catch {
+        sendJson(req, res, 400, { error: "Invalid JSON body" });
+        return;
+      }
+
+      try {
+        const scopeRaw = body?.scope;
+        const scope =
+          scopeRaw === undefined || scopeRaw === null
+            ? "day"
+            : String(scopeRaw);
+        if (scope !== "day" && scope !== "week" && scope !== "month") {
+          sendJson(req, res, 400, {
+            error: "scope must be day, week, or month",
+          });
+          return;
+        }
+
+        const plan = await createPlanItem({
+          userId: payload.sub,
+          planDate: String(body?.plan_date ?? ""),
+          title: String(body?.title ?? ""),
+          scope: scope as PlanItemScope,
+        });
+        sendJson(req, res, 201, { plan });
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : "Failed to create plan";
+        sendJson(req, res, 400, { error: message });
+      }
+      return;
+    }
+
+    {
+      const planMatch = /^\/api\/plans\/(\d+)$/.exec(url.pathname);
+      if (planMatch) {
+        const payload = getAuthPayload(req);
+        if (!payload) {
+          sendJson(req, res, 401, { error: "Unauthorized" });
+          return;
+        }
+        if (
+          payload.role !== "Member" &&
+          payload.role !== "SubBoss"
+        ) {
+          sendJson(req, res, 403, {
+            error: "Only members can edit or delete plans",
+          });
+          return;
+        }
+
+        const planId = Number(planMatch[1]);
+        if (!Number.isFinite(planId) || planId <= 0) {
+          sendJson(req, res, 400, { error: "Invalid plan id" });
+          return;
+        }
+
+        if (req.method === "PUT") {
+          let body: Record<string, unknown> | null;
+          try {
+            body = await readJsonBody(req);
+          } catch {
+            sendJson(req, res, 400, { error: "Invalid JSON body" });
+            return;
+          }
+
+          const statusRaw = body?.status;
+          const status =
+            statusRaw === undefined || statusRaw === null
+              ? undefined
+              : String(statusRaw);
+          if (
+            status !== undefined &&
+            status !== "pending" &&
+            status !== "done" &&
+            status !== "not_done"
+          ) {
+            sendJson(req, res, 400, {
+              error: "status must be pending, done, or not_done",
+            });
+            return;
+          }
+
+          try {
+            const plan = await updatePlanItem({
+              id: planId,
+              title:
+                body?.title === undefined ? undefined : String(body.title),
+              status: status as PlanItemStatus | undefined,
+              note: body?.note === undefined ? undefined : String(body.note),
+              notDoneReason:
+                body?.not_done_reason === undefined
+                  ? undefined
+                  : String(body.not_done_reason),
+            });
+            sendJson(req, res, 200, { plan });
+          } catch (err) {
+            const message =
+              err instanceof Error ? err.message : "Failed to update plan";
+            sendJson(
+              req,
+              res,
+              message.includes("not found") ? 404 : 400,
+              { error: message },
+            );
+          }
+          return;
+        }
+
+        if (req.method === "DELETE") {
+          try {
+            await deletePlanItem(planId);
+            sendJson(req, res, 200, { ok: true });
+          } catch (err) {
+            const message =
+              err instanceof Error ? err.message : "Failed to delete plan";
+            sendJson(
+              req,
+              res,
+              message.includes("not found") ? 404 : 400,
+              { error: message },
+            );
+          }
+          return;
+        }
+      }
     }
 
     if (req.method === "GET" && url.pathname === "/api/financial") {
@@ -1025,6 +1932,26 @@ const server = createServer(async (req, res) => {
         return;
       }
 
+      const dayRaw = typeof body?.day === "string" ? body.day.trim() : "";
+      let createdAt: string | undefined;
+      if (dayRaw) {
+        if (payload.role !== "BigBoss") {
+          sendJson(req, res, 403, {
+            error: "Only BigBoss can set Bid amounts for other weeks",
+          });
+          return;
+        }
+        // Accept YYYY-MM-DD or full ISO timestamp from the client.
+        const parsed = new Date(dayRaw);
+        if (Number.isNaN(parsed.getTime())) {
+          sendJson(req, res, 400, {
+            error: "day must be a valid date",
+          });
+          return;
+        }
+        createdAt = parsed.toISOString();
+      }
+
       const targetUserId = Math.trunc(userId);
       const targetUser = await getUserById(targetUserId);
       if (!targetUser) {
@@ -1036,6 +1963,7 @@ const server = createServer(async (req, res) => {
         userId: targetUserId,
         projectId: null,
         amount,
+        createdAt,
       });
       sendJson(req, res, 201, { deposit });
       return;
@@ -1152,19 +2080,86 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === "POST" && url.pathname === "/api/profile-generator") {
+      const payload = getAuthPayload(req);
+      if (!payload) {
+        sendJson(req, res, 401, { error: "Unauthorized" });
+        return;
+      }
+
+      let body: Record<string, unknown> | null;
+      try {
+        body = await readJsonBody(req);
+      } catch {
+        sendJson(req, res, 400, { error: "Invalid JSON body" });
+        return;
+      }
+
+      const result = await generateProfileDocx(body ?? {});
+      if (!result.ok) {
+        sendJson(req, res, result.status, { error: result.error });
+        return;
+      }
+
+      sendBinary(req, res, 200, result.buffer, {
+        "Content-Type": DOCX_MIME,
+        "Content-Disposition": 'attachment; filename="upwork-profile.docx"',
+      });
+      return;
+    }
+
     sendJson(req, res, 404, { error: "Not found" });
   } catch (err) {
     console.error(err);
-    sendJson(req, res, 500, { error: "Internal server error" });
+    if (!res.headersSent) {
+      const message = err instanceof Error ? err.message : "";
+      const isDb =
+        message.toLowerCase().includes("connection") ||
+        message.toLowerCase().includes("timeout") ||
+        message.toLowerCase().includes("econn");
+      sendJson(req, res, isDb ? 503 : 500, {
+        error: isDb
+          ? "Database temporarily unavailable"
+          : "Internal server error",
+      });
+    } else if (!res.writableEnded) {
+      res.end();
+    }
   }
 });
+
+// Profile generator waits on n8n (~280s); keep request sockets open long enough.
+server.requestTimeout = 300_000;
+server.headersTimeout = 305_000;
+server.keepAliveTimeout = 65_000;
+server.timeout = 0;
+
+const EVENT_NOTIFY_MS = 15_000;
+const eventNotifyTimer = setInterval(() => {
+  void notifyDueEvents().catch((err) => {
+    console.error("Failed to notify due events:", err);
+  });
+  void notifyDueBirthdays().catch((err) => {
+    console.error("Failed to notify due birthdays:", err);
+  });
+}, EVENT_NOTIFY_MS);
+eventNotifyTimer.unref?.();
 
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`Backend listening on http://0.0.0.0:${PORT}`);
 });
 
+process.on("unhandledRejection", (err) => {
+  console.error("Unhandled rejection:", err);
+});
+
+process.on("uncaughtException", (err) => {
+  console.error("Uncaught exception:", err);
+});
+
 async function shutdown() {
   console.log("Shutting down…");
+  clearInterval(eventNotifyTimer);
   server.close();
   await closePool();
   process.exit(0);

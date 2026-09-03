@@ -265,13 +265,15 @@ function parseAmount(raw: unknown): number {
   const text = String(raw ?? "").trim();
   if (text === "") return 0;
   const value = Number(text);
-  return Number.isFinite(value) ? value : 0;
+  if (!Number.isFinite(value)) return 0;
+  return Math.round((value + Number.EPSILON) * 1000) / 1000;
 }
 
 function formatBalance(value: number): string {
-  if (Object.is(value, -0)) return "0";
-  if (Number.isInteger(value)) return String(value);
-  return String(Math.round(value * 1000) / 1000);
+  const rounded = Math.round((value + Number.EPSILON) * 1000) / 1000;
+  if (Object.is(rounded, -0)) return "0";
+  if (Number.isInteger(rounded)) return String(rounded);
+  return String(rounded);
 }
 
 function formatPrice(value: number): string {
@@ -686,6 +688,7 @@ export default function FinancialPage() {
   const [saveError, setSaveError] = useState<string | null>(null);
 
   const canEditBid = currentUser != null && currentUser.role !== "Member";
+  const isBigBoss = currentUser?.role === "BigBoss";
 
   const weekColumns = useMemo(() => getTargetWeekColumns(target), [target]);
   const depositsByUser = useMemo(
@@ -715,13 +718,15 @@ export default function FinancialPage() {
     let weekHint: string;
     if (!canEditBid) {
       weekHint = "Bid values are read-only for Member role.";
+    } else if (isBigBoss) {
+      weekHint = "BigBoss can edit the Bid row for any week in the plan.";
     } else if (currentWeekLabel) {
       weekHint = `Today is ${currentWeekLabel}. Only the Bid row for ${currentWeekLabel} is editable.`;
     } else {
       weekHint = "Today is outside the plan week range. All weeks are read-only.";
     }
     return `${formatMonthDay(parseDateKey(first.key))} – ${formatMonthDay(parseDateKey(last.endKey))} (${weekColumns.length} week${weekColumns.length === 1 ? "" : "s"} from plan). ${weekHint}`;
-  }, [weekColumns, currentWeekLabel, canEditBid]);
+  }, [weekColumns, currentWeekLabel, canEditBid, isBigBoss]);
 
   const loadData = useCallback(async () => {
     try {
@@ -765,7 +770,7 @@ export default function FinancialPage() {
     const key = dayValueKey(memberId, BID_ROW_KEY, weekKey);
     const previousAmount = parseAmount(committedAmounts.current[key] ?? "");
     const nextAmount = parseAmount(nextRaw);
-    const delta = nextAmount - previousAmount;
+    const delta = parseAmount(nextAmount - previousAmount);
     const previousDisplay =
       previousAmount === 0 ? "" : formatBalance(previousAmount);
 
@@ -798,6 +803,15 @@ export default function FinancialPage() {
       const deposit = await createBidDepositForUser({
         user_id: targetUserId,
         amount: delta,
+        ...(isBigBoss
+          ? {
+              day: (() => {
+                const weekStart = parseDateKey(weekKey);
+                weekStart.setHours(12, 0, 0, 0);
+                return weekStart.toISOString();
+              })(),
+            }
+          : {}),
       });
       if (Number(deposit.user_id) !== targetUserId) {
         setAmounts((current) => ({ ...current, [key]: previousDisplay }));
@@ -879,7 +893,9 @@ export default function FinancialPage() {
                             <th
                               key={column.key}
                               className={`${weekColumnClass} ${
-                                column.editable ? "bg-sky-50 text-sky-700" : ""
+                                isBigBoss || column.editable
+                                  ? "bg-sky-50 text-sky-700"
+                                  : ""
                               }`}
                               title={`${formatMonthDay(parseDateKey(column.key))} – ${formatMonthDay(parseDateKey(column.endKey))}`}
                             >
@@ -967,7 +983,7 @@ export default function FinancialPage() {
                                   const editable =
                                     canEditBid &&
                                     row.key === BID_ROW_KEY &&
-                                    column.editable;
+                                    (isBigBoss || column.editable);
 
                                   return (
                                     <ExcelWeekCell

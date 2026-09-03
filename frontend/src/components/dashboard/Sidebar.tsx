@@ -11,10 +11,20 @@ type SidebarProps = {
   onLogout: () => void;
   mobileOpen: boolean;
   onCloseMobile: () => void;
+  collapsed: boolean;
+  onToggleCollapsed: () => void;
 };
 
 function isActive(pathname: string, href: string) {
   return pathname === href || pathname.startsWith(`${href}/`);
+}
+
+function navInitial(label: string): string {
+  const parts = label.trim().split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) {
+    return `${parts[0]![0] ?? ""}${parts[1]![0] ?? ""}`.toUpperCase();
+  }
+  return (parts[0]?.slice(0, 2) ?? "?").toUpperCase();
 }
 
 export function Sidebar({
@@ -24,37 +34,44 @@ export function Sidebar({
   onLogout,
   mobileOpen,
   onCloseMobile,
+  collapsed,
+  onToggleCollapsed,
 }: SidebarProps) {
   const pathname = usePathname();
-  const isTester = userRole.trim().toLowerCase() === "tester";
   const allowedHrefs = new Set(getNavHrefsForRole(userRole));
-  const navItems = isTester
-    ? ALL_NAV_ITEMS
-    : ALL_NAV_ITEMS.filter((item) => allowedHrefs.has(item.href));
+  const navItems = ALL_NAV_ITEMS.filter((item) => allowedHrefs.has(item.href));
 
   return (
     <>
       <div
         aria-hidden={!mobileOpen}
-        className={`fixed inset-0 z-40 bg-slate-900/40 transition-opacity lg:hidden ${
+        className={`fixed inset-0 z-40 bg-slate-900/50 backdrop-blur-[1px] transition-opacity lg:hidden ${
           mobileOpen ? "opacity-100" : "pointer-events-none opacity-0"
         }`}
         onClick={onCloseMobile}
       />
 
       <aside
-        className={`fixed inset-y-0 left-0 z-50 flex w-64 flex-col border-r border-slate-200 bg-[#0f172a] text-slate-100 transition-transform lg:static lg:translate-x-0 ${
-          mobileOpen ? "translate-x-0" : "-translate-x-full"
+        className={`sidebar-panel fixed inset-y-0 left-0 z-50 flex w-64 flex-col border-r border-white/10 text-slate-100 transition-[width,transform] duration-300 ease-out ${
+          collapsed ? "lg:w-16" : "lg:w-64"
+        } ${
+          mobileOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
         }`}
       >
-        <div className="flex h-16 items-center justify-between px-5">
-          <Link
-            href="/dashboard/overview"
-            onClick={onCloseMobile}
-            className="text-xl font-semibold tracking-tight text-white"
-          >
-            Team
-          </Link>
+        <div
+          className={`flex h-16 shrink-0 items-center border-b border-white/10 ${
+            collapsed ? "justify-center px-1" : "justify-between gap-2 px-4"
+          }`}
+        >
+          {!collapsed ? (
+            <Link
+              href="/dashboard/overview"
+              onClick={onCloseMobile}
+              className="sidebar-brand min-w-0 truncate text-xl font-semibold tracking-tight"
+            >
+              Team
+            </Link>
+          ) : null}
           <button
             type="button"
             onClick={onCloseMobile}
@@ -62,10 +79,23 @@ export function Sidebar({
           >
             Close
           </button>
+          <button
+            type="button"
+            onClick={onToggleCollapsed}
+            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            className="hidden rounded-lg border border-white/15 bg-white/5 px-2 py-1.5 text-slate-200 shadow-sm transition hover:bg-white/10 lg:inline-flex"
+          >
+            <CollapseIcon collapsed={collapsed} />
+          </button>
         </div>
 
-        <nav className="flex flex-1 flex-col gap-1 px-3 py-2">
-          {navItems.map((item) => {
+        <nav
+          className={`flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto py-3 ${
+            collapsed ? "px-1.5" : "px-3"
+          }`}
+        >
+          {navItems.map((item, index) => {
             const active = isActive(pathname, item.href);
 
             return (
@@ -73,35 +103,85 @@ export function Sidebar({
                 key={item.href}
                 href={item.href}
                 onClick={onCloseMobile}
-                className={`rounded-xl px-3 py-2.5 text-sm font-medium transition ${
+                title={item.label}
+                style={{ animationDelay: `${index * 36}ms` }}
+                className={`nav-enter rounded-xl text-sm font-medium transition ${
+                  collapsed
+                    ? "flex items-center justify-center px-0 py-2.5"
+                    : "px-3 py-2.5"
+                } ${
                   active
-                    ? "bg-white/12 text-white"
-                    : "text-slate-300 hover:bg-white/8 hover:text-white"
+                    ? "sidebar-nav-active text-white"
+                    : "border-l-2 border-transparent text-slate-300 hover:bg-white/8 hover:text-white"
                 }`}
               >
-                {item.label}
+                {collapsed ? (
+                  <span className="text-[11px] font-semibold tracking-wide">
+                    {navInitial(item.label)}
+                  </span>
+                ) : (
+                  item.label
+                )}
               </Link>
             );
           })}
         </nav>
 
-        <div className="border-t border-white/10 p-4">
-          <div className="mb-3">
-            <p className="truncate text-sm font-medium text-white">{userName}</p>
-            <p className="truncate text-xs text-slate-400">{userEmail}</p>
-            <p className="mt-1 text-xs uppercase tracking-wide text-slate-500">
-              {userRole}
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={onLogout}
-            className="w-full rounded-xl border border-white/15 px-3 py-2 text-sm font-medium text-slate-200 transition hover:bg-white/10"
-          >
-            Sign out
-          </button>
+        <div
+          className={`shrink-0 border-t border-white/10 bg-black/20 backdrop-blur-sm ${
+            collapsed ? "p-2" : "p-4"
+          }`}
+        >
+          {!collapsed ? (
+            <>
+              <div className="mb-3">
+                <p className="truncate text-sm font-medium text-white">
+                  {userName}
+                </p>
+                <p className="truncate text-xs text-slate-400">{userEmail}</p>
+                <p className="mt-1 text-xs uppercase tracking-wide text-slate-500">
+                  {userRole}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={onLogout}
+                className="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-sm font-medium text-slate-200 shadow-sm transition hover:bg-white/10"
+              >
+                Sign out
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              onClick={onLogout}
+              title="Sign out"
+              className="flex w-full items-center justify-center rounded-xl border border-white/15 bg-white/5 py-2 text-xs font-semibold text-slate-200 shadow-sm transition hover:bg-white/10"
+            >
+              Out
+            </button>
+          )}
         </div>
       </aside>
     </>
+  );
+}
+
+function CollapseIcon({ collapsed }: { collapsed: boolean }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className="h-4 w-4"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      aria-hidden
+    >
+      {collapsed ? (
+        <path d="M9 6l6 6-6 6M4 5v14" />
+      ) : (
+        <path d="M15 6l-6 6 6 6M20 5v14" />
+      )}
+    </svg>
   );
 }

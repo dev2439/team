@@ -17,13 +17,16 @@ import {
 import { Sidebar } from "@/components/dashboard/Sidebar";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import {
+  alertPathForNotification,
   fetchUnreadBidNotifications,
   markBidNotificationsRead,
+  notificationKey,
   type BidNotification,
 } from "@/lib/notifications";
 import { canAccessPath, getDefaultDashboardPath } from "@/lib/roles";
+import { startBackgroundPoll } from "@/lib/poll";
 
-const NOTIFICATION_POLL_MS = 5000;
+const NOTIFICATION_POLL_MS = 10_000;
 
 function go(path: string, router: ReturnType<typeof useRouter>) {
   router.replace(path);
@@ -74,12 +77,15 @@ function showDesktopNotification(
   if (Notification.permission !== "granted") return false;
 
   try {
-    const desktop = new Notification(title, {
+    const tabHidden =
+      typeof document !== "undefined" && document.visibilityState === "hidden";
+    const notificationOptions = {
       body,
       tag: options.tag,
       renotify: true,
-      requireInteraction: false,
-    });
+      requireInteraction: tabHidden,
+    } as NotificationOptions;
+    const desktop = new Notification(title, notificationOptions);
 
     desktop.onclick = () => {
       window.focus();
@@ -92,24 +98,47 @@ function showDesktopNotification(
   }
 }
 
+function alertCopy(alert: BidNotification): { title: string; action: string } {
+  if (alert.kind === "bid_test") {
+    return {
+      title: "New bid test",
+      action: "submitted a new bid test",
+    };
+  }
+  if (alert.kind === "event") {
+    const title = alert.event_title.trim() || "an event";
+    return {
+      title: "Event starts in 30 minutes",
+      action: `scheduled “${title}” — starts in 30 minutes`,
+    };
+  }
+  if (alert.kind === "birthday") {
+    return {
+      title: "Birthday today (JST)",
+      action: "has a birthday today",
+    };
+  }
+  return {
+    title: "New bid",
+    action: "submitted a new bid",
+  };
+}
+
 function showDesktopBidNotification(
   alert: BidNotification,
   extraCount: number,
   onOpen: () => void,
 ): boolean {
+  const copy = alertCopy(alert);
   const body =
     extraCount > 0
-      ? `${alert.actor_name} submitted a new bid (+${extraCount} more).`
-      : `${alert.actor_name} submitted a new bid.`;
+      ? `${alert.actor_name} ${copy.action} (+${extraCount} more).`
+      : `${alert.actor_name} ${copy.action}.`;
 
-  return showDesktopNotification("New bid", body, {
-    tag: `bid-alert-${alert.id}`,
+  return showDesktopNotification(copy.title, body, {
+    tag: `alert-${notificationKey(alert)}`,
     onOpen,
   });
-}
-
-function bidAlertPathForRole(role: string): string {
-  return role === "BigBoss" ? "/dashboard/team-bid" : "/dashboard/bid";
 }
 
 export function DashboardShell({ children }: { children: ReactNode }) {
@@ -118,14 +147,15 @@ export function DashboardShell({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<PublicUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [bidAlerts, setBidAlerts] = useState<BidNotification[]>([]);
   const [desktopPermission, setDesktopPermission] = useState<
     NotificationPermission | "unsupported"
   >("default");
   const [desktopHint, setDesktopHint] = useState<string | null>(null);
-  const desktopNotifiedIds = useRef(new Set<number>());
-  /** IDs already present on first successful poll — do not desktop-notify these. */
-  const preloadNotificationIds = useRef<Set<number> | null>(null);
+  const desktopNotifiedIds = useRef(new Set<string>());
+  /** Keys already present on first successful poll — do not desktop-notify these. */
+  const preloadNotificationIds = useRef<Set<string> | null>(null);
 
   useEffect(() => {
     async function load() {
@@ -147,6 +177,37 @@ export function DashboardShell({ children }: { children: ReactNode }) {
 
     void load();
   }, [router]);
+
+  useEffect(() => {
+    try {
+      const saved = window.localStorage.getItem("team.sidebarCollapsed");
+      if (saved === "1") setSidebarCollapsed(true);
+    } catch {
+      // ignore storage errors
+    }
+  }, []);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    root.classList.add("dashboard-scroll-lock");
+    document.body.classList.add("dashboard-scroll-lock");
+    return () => {
+      root.classList.remove("dashboard-scroll-lock");
+      document.body.classList.remove("dashboard-scroll-lock");
+    };
+  }, []);
+
+  function toggleSidebarCollapsed() {
+    setSidebarCollapsed((current) => {
+      const next = !current;
+      try {
+        window.localStorage.setItem("team.sidebarCollapsed", next ? "1" : "0");
+      } catch {
+        // ignore storage errors
+      }
+      return next;
+    });
+  }
 
   useEffect(() => {
     if (!isSecureNotificationContext() || !desktopNotificationsSupported()) {
@@ -178,22 +239,24 @@ export function DashboardShell({ children }: { children: ReactNode }) {
         : [];
       setBidAlerts(mine);
 
-      // First successful poll: remember existing IDs so refresh does not spam.
+      // First successful poll: remember existing keys so refresh does not spam.
       if (preloadNotificationIds.current == null) {
-        preloadNotificationIds.current = new Set(mine.map((item) => item.id));
+        preloadNotificationIds.current = new Set(
+          mine.map((item) => notificationKey(item)),
+        );
         for (const item of mine) {
-          desktopNotifiedIds.current.add(item.id);
+          desktopNotifiedIds.current.add(notificationKey(item));
         }
         return;
       }
 
       const fresh = mine.filter(
         (item) =>
-          !desktopNotifiedIds.current.has(item.id) &&
-          !preloadNotificationIds.current?.has(item.id),
+          !desktopNotifiedIds.current.has(notificationKey(item)) &&
+          !preloadNotificationIds.current?.has(notificationKey(item)),
       );
       for (const item of fresh) {
-        desktopNotifiedIds.current.add(item.id);
+        desktopNotifiedIds.current.add(notificationKey(item));
       }
 
       if (
@@ -203,7 +266,7 @@ export function DashboardShell({ children }: { children: ReactNode }) {
       ) {
         const latest = fresh[0]!;
         showDesktopBidNotification(latest, fresh.length - 1, () => {
-          go(bidAlertPathForRole(user.role), router);
+          go(alertPathForNotification(latest, user.role), router);
         });
       }
     } catch {
@@ -216,14 +279,11 @@ export function DashboardShell({ children }: { children: ReactNode }) {
 
     preloadNotificationIds.current = null;
     desktopNotifiedIds.current = new Set();
-    void pollBidNotifications();
-    const timer = window.setInterval(() => {
-      void pollBidNotifications();
-    }, NOTIFICATION_POLL_MS);
-
-    return () => {
-      window.clearInterval(timer);
-    };
+    return startBackgroundPoll(
+      () => pollBidNotifications(),
+      NOTIFICATION_POLL_MS,
+      { pollWhenHidden: true },
+    );
   }, [user, pollBidNotifications]);
 
   async function enableDesktopNotifications() {
@@ -277,11 +337,14 @@ export function DashboardShell({ children }: { children: ReactNode }) {
   }
 
   async function dismissBidAlerts() {
-    const ids = bidAlerts.map((item) => item.id);
+    const items = bidAlerts.map((item) => ({
+      id: item.id,
+      kind: item.kind,
+    }));
     setBidAlerts([]);
-    if (ids.length === 0) return;
+    if (items.length === 0) return;
     try {
-      await markBidNotificationsRead(ids);
+      await markBidNotificationsRead(items);
     } catch {
       // Keep UI dismissed even if mark-read fails; next poll can retry.
     }
@@ -316,7 +379,7 @@ export function DashboardShell({ children }: { children: ReactNode }) {
     desktopPermission === "unsupported";
 
   return (
-    <div className="flex min-h-full flex-1 bg-[#f4f6f8]">
+    <div className="dashboard-shell flex h-dvh max-h-dvh min-h-0 overflow-hidden">
       <Sidebar
         userName={user.name}
         userRole={user.role}
@@ -324,14 +387,20 @@ export function DashboardShell({ children }: { children: ReactNode }) {
         onLogout={onLogout}
         mobileOpen={mobileOpen}
         onCloseMobile={() => setMobileOpen(false)}
+        collapsed={sidebarCollapsed}
+        onToggleCollapsed={toggleSidebarCollapsed}
       />
 
-      <div className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-30 flex h-16 items-center gap-3 border-b border-slate-200 bg-white/90 px-4 backdrop-blur lg:px-8">
+      <div
+        className={`dashboard-main flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden transition-[padding] duration-300 ease-out ${
+          sidebarCollapsed ? "lg:pl-16" : "lg:pl-64"
+        }`}
+      >
+        <header className="glass-header z-30 flex h-16 shrink-0 items-center gap-3 border-b border-slate-200/70 px-4 lg:px-8">
           <button
             type="button"
             onClick={() => setMobileOpen(true)}
-            className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 lg:hidden"
+            className="rounded-xl border border-slate-200/80 bg-white/70 px-3 py-2 text-sm font-medium text-slate-700 shadow-sm backdrop-blur lg:hidden"
           >
             Menu
           </button>
@@ -341,14 +410,14 @@ export function DashboardShell({ children }: { children: ReactNode }) {
             </p>
             <p className="truncate text-xs text-slate-500">{user.role}</p>
           </div>
-          <ThemeToggle className="shrink-0 border-slate-200 bg-white text-slate-700 hover:bg-slate-50" />
+          <ThemeToggle className="shrink-0" />
           {showDesktopEnableButton && (
             <button
               type="button"
               onClick={() => {
                 void enableDesktopNotifications();
               }}
-              className="shrink-0 rounded-lg border border-sky-200 bg-sky-50 px-2.5 py-1.5 text-xs font-medium text-sky-800 hover:bg-sky-100"
+              className="shrink-0 rounded-lg border border-sky-200/80 bg-sky-50/80 px-2.5 py-1.5 text-xs font-medium text-sky-800 shadow-sm backdrop-blur hover:bg-sky-100"
             >
               Enable desktop alerts
             </button>
@@ -356,12 +425,12 @@ export function DashboardShell({ children }: { children: ReactNode }) {
         </header>
 
         {desktopHint && (
-          <div className="flex flex-wrap items-center gap-3 border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-900 lg:px-8">
+          <div className="flex shrink-0 flex-wrap items-center gap-3 border-b border-amber-200/80 bg-amber-50/80 px-4 py-2 text-xs text-amber-900 backdrop-blur lg:px-8">
             <p className="min-w-0 flex-1">{desktopHint}</p>
             {!isSecureNotificationContext() && (
               <a
                 href={httpsAppUrl()}
-                className="shrink-0 rounded-md border border-amber-300 bg-white px-2.5 py-1 font-medium text-amber-950 hover:bg-amber-100"
+                className="shrink-0 rounded-md border border-amber-300 bg-white/80 px-2.5 py-1 font-medium text-amber-950 shadow-sm hover:bg-amber-100"
               >
                 Open HTTPS
               </a>
@@ -369,18 +438,23 @@ export function DashboardShell({ children }: { children: ReactNode }) {
           </div>
         )}
 
-        <main className="flex-1 px-4 py-6 lg:px-8 lg:py-8">{children}</main>
+        <main
+          key={pathname}
+          className="page-enter min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-4 py-6 lg:px-8 lg:py-8"
+        >
+          {children}
+        </main>
       </div>
 
       {latestAlert && (
         <div className="pointer-events-none fixed inset-x-0 top-4 z-50 flex justify-center px-4">
-          <div className="pointer-events-auto flex w-full max-w-md items-start gap-3 rounded-xl border border-sky-200 bg-white px-4 py-3 shadow-lg shadow-slate-900/10">
+          <div className="alert-enter glass-alert pointer-events-auto flex w-full max-w-md items-start gap-3 rounded-xl border border-sky-200/70 px-4 py-3 dark:border-sky-400/45">
             <div className="min-w-0 flex-1">
-              <p className="text-sm font-semibold text-slate-900">
-                New bid
+              <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                {alertCopy(latestAlert).title}
               </p>
-              <p className="mt-0.5 text-sm text-slate-600">
-                {latestAlert.actor_name} submitted a new bid
+              <p className="mt-0.5 text-sm text-slate-600 dark:text-slate-400">
+                {latestAlert.actor_name} {alertCopy(latestAlert).action}
                 {bidAlerts.length > 1 ? ` (+${bidAlerts.length - 1} more)` : ""}.
               </p>
               {showDesktopEnableButton && (
@@ -389,7 +463,7 @@ export function DashboardShell({ children }: { children: ReactNode }) {
                   onClick={() => {
                     void enableDesktopNotifications();
                   }}
-                  className="mt-2 text-xs font-medium text-sky-700 hover:text-sky-800"
+                  className="mt-2 text-xs font-medium text-sky-700 hover:text-sky-800 dark:text-sky-400 dark:hover:text-sky-300"
                 >
                   Also show desktop notifications
                 </button>
@@ -400,9 +474,9 @@ export function DashboardShell({ children }: { children: ReactNode }) {
                 type="button"
                 onClick={() => {
                   void dismissBidAlerts();
-                  go(bidAlertPathForRole(user.role), router);
+                  go(alertPathForNotification(latestAlert, user.role), router);
                 }}
-                className="rounded-lg bg-slate-900 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-slate-800"
+                className="rounded-lg bg-slate-900 px-2.5 py-1.5 text-xs font-medium text-white shadow-md hover:bg-slate-800 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white"
               >
                 View
               </button>
@@ -411,7 +485,7 @@ export function DashboardShell({ children }: { children: ReactNode }) {
                 onClick={() => {
                   void dismissBidAlerts();
                 }}
-                className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+                className="rounded-lg border border-slate-200/80 bg-white/70 px-2.5 py-1.5 text-xs font-medium text-slate-600 backdrop-blur hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-700/90 dark:text-slate-300 dark:hover:bg-slate-600"
               >
                 Dismiss
               </button>

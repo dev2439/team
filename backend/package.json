@@ -13,7 +13,8 @@
     "db:check": "node --experimental-strip-types --experimental-transform-types scripts/check-db.ts"
   },
   "dependencies": {
-    "pg": "^8.23.0"
+    "pg": "^8.23.0",
+    "docx": "^9.7.1"
   },
   "engines": {
     "node": ">=22"

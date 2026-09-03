@@ -1,4 +1,6 @@
-import { getApiBase, getToken } from "@/lib/auth";
+import { fetchWithTimeout, getApiBase, getToken } from "@/lib/auth";
+
+const BIDS_TIMEOUT_MS = 12_000;
 
 export type Bid = {
   id: number;
@@ -16,8 +18,24 @@ export type TeamBid = Bid & {
   sub_team_name: string | null;
 };
 
+export type BidDayMemberCount = {
+  user_id: number;
+  user_name: string;
+  count: number;
+};
+
+export type BidDay = {
+  date: string;
+  count: number;
+  members?: BidDayMemberCount[];
+};
+
 type BidsResponse = {
   bids: Bid[];
+};
+
+type BidDaysResponse = {
+  days: BidDay[];
 };
 
 type TeamBidsResponse = {
@@ -44,10 +62,22 @@ async function authFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
     headers.set("Content-Type", "application/json");
   }
 
-  const res = await fetch(`${getApiBase()}${path}`, {
-    ...init,
-    headers,
-  });
+  let res: Response;
+  try {
+    res = await fetchWithTimeout(
+      `${getApiBase()}${path}`,
+      {
+        ...init,
+        headers,
+      },
+      BIDS_TIMEOUT_MS,
+    );
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new Error("Request timed out");
+    }
+    throw err;
+  }
 
   const data = (await res.json()) as T | ErrorResponse;
 
@@ -65,13 +95,33 @@ async function authFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
   return data as T;
 }
 
-export async function fetchBids(): Promise<Bid[]> {
-  const data = await authFetch<BidsResponse>("/api/bids");
+export async function fetchBidDays(): Promise<BidDay[]> {
+  const data = await authFetch<BidDaysResponse>("/api/bids/days");
+  return data.days;
+}
+
+export async function fetchBids(input: { date: string }): Promise<Bid[]> {
+  const params = new URLSearchParams({ date: input.date });
+  const data = await authFetch<BidsResponse>(`/api/bids?${params.toString()}`);
   return data.bids;
 }
 
-export async function fetchTeamBids(): Promise<TeamBid[]> {
-  const data = await authFetch<TeamBidsResponse>("/api/team-bids");
+export async function fetchTeamBidDays(): Promise<BidDay[]> {
+  const data = await authFetch<BidDaysResponse>("/api/team-bids/days");
+  return data.days;
+}
+
+export async function fetchTeamBids(input?: {
+  date: string;
+}): Promise<TeamBid[]> {
+  const params = new URLSearchParams();
+  if (input?.date) {
+    params.set("date", input.date);
+  }
+  const query = params.toString();
+  const data = await authFetch<TeamBidsResponse>(
+    `/api/team-bids${query ? `?${query}` : ""}`,
+  );
   return data.bids;
 }
 
@@ -89,4 +139,56 @@ export async function createBidRequest(input: {
     }),
   });
   return data.bid;
+}
+
+export async function fetchFreelancerBidDays(): Promise<BidDay[]> {
+  const data = await authFetch<BidDaysResponse>("/api/freelancer-bids/days");
+  return data.days;
+}
+
+export async function fetchFreelancerBids(input: {
+  date: string;
+}): Promise<Bid[]> {
+  const params = new URLSearchParams({ date: input.date });
+  const data = await authFetch<BidsResponse>(
+    `/api/freelancer-bids?${params.toString()}`,
+  );
+  return data.bids;
+}
+
+export async function createFreelancerBidRequest(input: {
+  url: string;
+  proposal: string;
+  image?: string | null;
+}): Promise<Bid> {
+  const data = await authFetch<BidResponse>("/api/freelancer-bids", {
+    method: "POST",
+    body: JSON.stringify({
+      url: input.url,
+      proposal: input.proposal,
+      image: input.image ?? null,
+    }),
+  });
+  return data.bid;
+}
+
+export async function fetchTeamFreelancerBidDays(): Promise<BidDay[]> {
+  const data = await authFetch<BidDaysResponse>(
+    "/api/team-freelancer-bids/days",
+  );
+  return data.days;
+}
+
+export async function fetchTeamFreelancerBids(input?: {
+  date: string;
+}): Promise<TeamBid[]> {
+  const params = new URLSearchParams();
+  if (input?.date) {
+    params.set("date", input.date);
+  }
+  const query = params.toString();
+  const data = await authFetch<TeamBidsResponse>(
+    `/api/team-freelancer-bids${query ? `?${query}` : ""}`,
+  );
+  return data.bids;
 }

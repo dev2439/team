@@ -2145,9 +2145,15 @@ const eventNotifyTimer = setInterval(() => {
 }, EVENT_NOTIFY_MS);
 eventNotifyTimer.unref?.();
 
-server.listen(PORT, "0.0.0.0", () => {
-  console.log(`Backend listening on http://0.0.0.0:${PORT}`);
-});
+if (process.env.VERCEL) {
+  server.listen(PORT);
+} else {
+  server.listen(PORT, "0.0.0.0", () => {
+    console.log(`Backend listening on http://0.0.0.0:${PORT}`);
+  });
+}
+
+export default server;
 
 process.on("unhandledRejection", (err) => {
   console.error("Unhandled rejection:", err);

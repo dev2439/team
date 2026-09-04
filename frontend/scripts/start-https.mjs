@@ -3,8 +3,8 @@
  *
  * next start is HTTP-only; this script:
  * 1) ensures the same self-signed LAN certs as dev-https
- * 2) runs `next start` on 127.0.0.1:3001
- * 3) terminates TLS on 0.0.0.0:3000 and proxies to the Next process
+ * 2) runs `next start` on 127.0.0.1:2440
+ * 3) terminates TLS on 0.0.0.0:2439 and proxies to the Next process
  *
  * Usage (from repo root after build):
  *   npm run start:frontend:https
@@ -26,9 +26,9 @@ const certPath = resolve(certDir, "dev-cert.pem");
 const sanPath = resolve(certDir, "dev-san.cnf");
 
 const PUBLIC_HOST = "0.0.0.0";
-const PUBLIC_PORT = Number(process.env.PORT) || 3000;
+const PUBLIC_PORT = Number(process.env.PORT) || 2439;
 const NEXT_HOST = "127.0.0.1";
-const NEXT_PORT = Number(process.env.NEXT_INTERNAL_PORT) || 3001;
+const NEXT_PORT = Number(process.env.NEXT_INTERNAL_PORT) || 2440;
 
 function lanIpv4Addresses() {
   const addresses = new Set(["127.0.0.1"]);

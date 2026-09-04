@@ -36,7 +36,7 @@ export function getApiBase(): string {
     return `${window.location.origin}/backend`;
   }
 
-  return process.env.BACKEND_URL ?? "http://127.0.0.1:4000";
+  return process.env.BACKEND_URL ?? "http://127.0.0.1:6017";
 }
 
 export function getToken(): string | null {

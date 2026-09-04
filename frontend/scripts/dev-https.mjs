@@ -23,6 +23,12 @@ function lanIpv4Addresses() {
       }
     }
   }
+  for (const extra of String(process.env.PUBLIC_IP || "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean)) {
+    addresses.add(extra);
+  }
   return [...addresses];
 }
 
@@ -58,7 +64,7 @@ ${sanLines.join("\n")}
 
   writeFileSync(sanPath, `${config}\n`, "utf8");
 
-  // Regenerate when missing so LAN IP changes are picked up on restart.
+  // Always regenerate so LAN/public IP changes are picked up on restart.
   execFileSync(
     "openssl",
     [
@@ -81,10 +87,11 @@ ${sanLines.join("\n")}
     { stdio: "inherit" },
   );
 
+  const publicPort = Number(process.env.PORT) || 2439;
   console.log("\nHTTPS cert ready for:");
-  console.log("  https://localhost:3000");
+  console.log(`  https://localhost:${publicPort}`);
   for (const ip of ips.filter((value) => value !== "127.0.0.1")) {
-    console.log(`  https://${ip}:3000`);
+    console.log(`  https://${ip}:${publicPort}`);
   }
   console.log(
     "\nOn another machine: open the https:// URL, accept the certificate warning, then enable desktop alerts.\n",
@@ -98,6 +105,8 @@ if (!existsSync(keyPath) || !existsSync(certPath)) {
   process.exit(1);
 }
 
+const PUBLIC_PORT = String(Number(process.env.PORT) || 2439);
+
 const child = spawn(
   "npx",
   [
@@ -106,7 +115,7 @@ const child = spawn(
     "--hostname",
     "0.0.0.0",
     "--port",
-    "3000",
+    PUBLIC_PORT,
     "--experimental-https",
     "--experimental-https-key",
     keyPath,

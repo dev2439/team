@@ -8,15 +8,16 @@
  *   npm run pm2:logs
  *   npm run pm2:stop
  */
+const path = require("node:path");
+
 module.exports = {
   apps: [
     {
       name: "team-backend",
-      cwd: "./backend",
+      cwd: path.join(__dirname, "backend"),
       script: "src/index.ts",
       interpreter: "node",
-      interpreter_args:
-        "--experimental-strip-types --experimental-transform-types",
+      interpreter_args: "--import tsx",
       instances: 1,
       exec_mode: "fork",
       autorestart: true,
@@ -31,7 +32,7 @@ module.exports = {
     },
     {
       name: "team-frontend",
-      cwd: "./frontend",
+      cwd: path.join(__dirname, "frontend"),
       script: "scripts/start-https.mjs",
       interpreter: "node",
       instances: 1,
@@ -44,9 +45,9 @@ module.exports = {
       kill_timeout: 10_000,
       env: {
         NODE_ENV: "production",
-        PORT: "3000",
-        NEXT_INTERNAL_PORT: "3001",
-        BACKEND_URL: "http://127.0.0.1:4000",
+        PORT: "2439",
+        NEXT_INTERNAL_PORT: "2440",
+        BACKEND_URL: "http://127.0.0.1:6017",
       },
     },
   ],

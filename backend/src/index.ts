@@ -113,7 +113,7 @@ function loadEnv() {
 
 loadEnv();
 
-const PORT = Number(process.env.PORT) || 4000;
+const PORT = Number(process.env.PORT) || 6017;
 
 function corsHeaders() {
   return {
@@ -2116,7 +2116,9 @@ const server = createServer(async (req, res) => {
       const isDb =
         message.toLowerCase().includes("connection") ||
         message.toLowerCase().includes("timeout") ||
-        message.toLowerCase().includes("econn");
+        message.toLowerCase().includes("econn") ||
+        message.toLowerCase().includes("password authentication") ||
+        message.toLowerCase().includes("remaining connection slots");
       sendJson(req, res, isDb ? 503 : 500, {
         error: isDb
           ? "Database temporarily unavailable"
